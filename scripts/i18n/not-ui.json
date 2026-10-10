@@ -1,0 +1,28 @@
+{
+  "about": "Strings in the code that look like English text but never show in the UI (CSS, keys, patterns, data). The UI text check skips them.",
+  "strings": [
+    "(prefers-color-scheme: dark)",
+    "Backspace",
+    "Before delete",
+    "CmdOrCtrl+O",
+    "CmdOrCtrl+Shift+N",
+    "Control",
+    "Ctrl+CmdOrCtrl+Z",
+    "Home",
+    "Meta",
+    "Shift",
+    "a[href], area[href]",
+    "card view-{0}{1}{2}{3}{4}{5}{6}{7}{8}{9}{10}",
+    "head > title",
+    "header, footer",
+    "hsl({0} 55% 65%)",
+    "img, input[type=image]",
+    "img, video[poster], input[type=image]",
+    "script, noscript, iframe, frame, frameset, object, embed, applet, base, portal, picture > source, video > source, audio > source, track",
+    "script, style, noscript, template, nav, aside, button, select, option, textarea, svg, math, iframe, [hidden]",
+    "translate(-50%, 0) translate({0}px, {1}px)",
+    "translate({0} {1})",
+    "translate({0} {1}) rotate({2})",
+    "video, audio"
+  ]
+}

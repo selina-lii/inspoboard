@@ -1,0 +1,409 @@
+.board { background: var(--bg-board); }
+.board.tool-note .react-flow__pane,
+.board.tool-page .react-flow__pane,
+.board.tool-text .react-flow__pane { cursor: copy; }
+
+.card {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  /* "clip", not only "hidden": a hidden overflow can still scroll (for example to show the cursor of a wide name
+     field), and the card then stays shifted to the left after the edit. A clipped card never scrolls. */
+  overflow: clip;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--text);
+}
+.card.view-note {
+  background: var(--note-bg);
+  border-color: var(--note-border);
+  color: var(--note-text);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+.card.view-note .card-preview,
+.card.view-note .card-icon,
+.card.view-note .untitled { color: var(--note-text-muted); }
+.card.view-note .card-icon:hover { color: var(--note-text); }
+.card.view-note .child-count { background: rgba(0, 0, 0, 0.12); color: var(--note-text); }
+/* A note edits its text in place, on the yellow paper: no edit box. */
+.card.view-note .card-body-input { background: transparent; border: none; color: inherit; padding: 0; outline: none; font: inherit; line-height: 1.45; }
+/* A note that is edited grows to the sticky note size (never larger), over its neighbors. */
+.card.view-note.note-editing { width: max(100%, 200px); height: max(100%, 160px); max-width: 200px; max-height: 160px; position: relative; z-index: 5; }
+.card.view-note .card-title-input { background: rgba(255, 255, 255, 0.5); color: var(--note-text); border-color: var(--note-border); }
+.card.view-note.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 2px 8px rgba(0, 0, 0, 0.35); }
+.card.view-note.ghost { background: transparent; color: var(--text-muted); border-color: var(--text-faint); }
+/* Page: a paper sheet with a folded top-right corner. */
+.card.view-page {
+  background:
+    linear-gradient(225deg, var(--bg-board) 0 10px, var(--page-border) 10px 14px, transparent 14px),
+    var(--page-bg);
+  border-color: var(--page-border);
+  border-radius: var(--radius);
+  color: var(--page-text);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+}
+.card.view-page .card-preview,
+.card.view-page .card-icon,
+.card.view-page .card-type,
+.card.view-page .untitled { color: var(--page-text-muted); }
+.card.view-page .card-icon:hover { color: var(--page-text); }
+.card.view-page .child-count { background: rgba(0, 0, 0, 0.1); color: var(--page-text); }
+.card.view-page .card-title-input { background: #fff; color: var(--page-text); border-color: var(--page-border); }
+.card.view-page.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 2px 10px rgba(0, 0, 0, 0.35); }
+
+/* An item with its own board: a dark panel, an accent edge, and a stack of cards behind it. */
+.card.view-board {
+  background: var(--board-card-bg);
+  border-color: var(--border-strong);
+  border-left: 3px solid var(--accent);
+  color: var(--text);
+}
+.card.view-board .card-type { color: var(--accent); }
+.card.has-board {
+  box-shadow:
+    4px 4px 0 -1px var(--bg-board), 4px 4px 0 0 var(--border-strong),
+    8px 8px 0 -1px var(--bg-board), 8px 8px 0 0 var(--border-strong),
+    0 2px 10px rgba(0, 0, 0, 0.35);
+}
+.card.has-board.selected {
+  box-shadow:
+    0 0 0 1px var(--accent),
+    4px 4px 0 -1px var(--bg-board), 4px 4px 0 0 var(--accent),
+    8px 8px 0 -1px var(--bg-board), 8px 8px 0 0 var(--accent);
+}
+.card-type { display: inline-flex; align-items: center; color: var(--text-faint); flex: none; }
+.card.view-note .card-type { color: var(--note-text-muted); }
+.card.view-board .card-preview { color: var(--text-muted); }
+.card.view-text { background: transparent; border-color: transparent; padding: 4px; }
+.card.view-text:hover { border-color: var(--border); }
+.card.selected { border-color: var(--accent); }
+.card.ghost { background: transparent; border-style: dashed; border-color: var(--text-faint); color: var(--text-muted); }
+
+.card-title { display: flex; align-items: center; gap: 4px; font-weight: 600; font-size: 13px; }
+.card-title .untitled { color: var(--text-faint); font-weight: 400; }
+.child-count {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: var(--bg-raised);
+  border-radius: 8px;
+  padding: 0 6px;
+}
+.card-preview { flex: 1; overflow: hidden; white-space: pre-wrap; color: var(--text-muted); font-size: 12px; line-height: 1.45; }
+.card-text { white-space: pre-wrap; font-size: 14px; line-height: 1.45; overflow: hidden; height: 100%; }
+
+.stamp { width: 100%; height: 100%; }
+.stamp svg { width: 100%; height: 100%; overflow: visible; }
+.stamp path { fill: none; stroke: var(--text); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.stamp.selected { outline: 1px dashed var(--accent); outline-offset: 4px; }
+
+.stub {
+  width: 100%;
+  height: 100%;
+  border: 1px dashed var(--border-strong);
+  border-radius: 14px;
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.stub:hover { color: var(--accent); border-color: var(--accent); }
+
+.react-flow__edge-path { stroke: var(--edge); stroke-width: 1.5; }
+.react-flow__edge.selected .react-flow__edge-path { stroke: var(--accent); }
+.react-flow__edge-textbg { fill: var(--bg-panel); }
+.react-flow__edge-text { fill: var(--text-muted); font-size: 11px; }
+.react-flow__connection-path { stroke: var(--accent); stroke-width: 1.5; }
+.react-flow__selection { background: var(--accent-soft); border: 1px solid var(--accent); }
+.react-flow__nodesselection-rect { background: transparent; border: 1px dashed var(--accent); }
+.resize-line { border-color: var(--accent) !important; }
+.resize-handle { width: 7px !important; height: 7px !important; background: var(--accent) !important; border: none !important; }
+.react-flow__attribution { background: transparent; opacity: 0.35; }
+.react-flow__attribution a { color: var(--text-faint); }
+
+.board-wrapper { position: absolute; inset: 0; }
+.card-title-input {
+  /* The name field fits its card (a narrow calendar card too). */
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+  font-weight: 600;
+  background: var(--bg-raised);
+  padding: 2px 4px;
+}
+.card-body-input {
+  width: 100%;
+  height: 100%;
+  resize: none;
+  background: var(--bg-raised);
+  border: 1px solid var(--accent);
+  font-size: 14px;
+  line-height: 1.45;
+  padding: 4px;
+}
+.card .untitled { color: var(--text-faint); }
+
+.react-flow__controls { box-shadow: none; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.react-flow__controls-button { background: var(--bg-panel); border-bottom: 1px solid var(--border); color: var(--text-muted); width: 28px; height: 28px; }
+.react-flow__controls-button:hover { background: var(--bg-hover); color: var(--text); }
+.react-flow__controls-button svg { fill: currentColor; max-width: 12px; max-height: 12px; }
+
+.card.collapsed { padding: 0 6px; justify-content: center; }
+.card-title { min-height: 24px; }
+.card-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  color: var(--text-faint);
+  flex: none;
+}
+.card-icon:hover { color: var(--text); }
+/* Collapsed cards fit their name. The buttons show on hover or selection, and the card grows to fit them. */
+.card.collapsed { width: max-content; max-width: 320px; min-width: 0; height: 100%; }
+.card.collapsed .card-name { flex: 0 1 auto; }
+/* A page with open comments: a pink dot at its top-right corner. */
+.comment-dot { position: absolute; top: 3px; right: 3px; width: 8px; height: 8px; pointer-events: auto; border-radius: 50%; background: #ff2bd6; box-shadow: 0 0 0 2px var(--bg); z-index: 2; }
+/* An open page card shows its whole name: a long name wraps. */
+.card.view-page:not(.collapsed) .card-title { align-items: flex-start; }
+.card.view-page:not(.collapsed) .card-name { white-space: normal; overflow-wrap: anywhere; }
+/* Hover tools are at the right end of the title row: when they show, the title does not move. */
+.card-hover-only { display: none; }
+.card:hover .card-hover-only, .card.selected .card-hover-only { display: inline-flex; }
+.center-edge-label {
+  position: absolute;
+  pointer-events: all;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 5px;
+}
+.center-edge-label.selected { color: var(--accent); border-color: var(--accent); }
+.react-flow__pane { cursor: default; }
+.react-flow__pane.dragging { cursor: grabbing; }
+
+/* Link tool */
+.react-flow__handle.hidden-handle { opacity: 0; width: 1px; height: 1px; min-width: 0; min-height: 0; border: none; pointer-events: none; }
+.board.tool-link .react-flow__node { cursor: crosshair; }
+.card.link-source { outline: 2px solid var(--accent); outline-offset: 3px; }
+.board-hint {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  background: var(--bg-raised);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 5px 12px;
+  font-size: 12px;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.board-hint-button { pointer-events: auto; padding: 2px 10px; border-radius: 999px; background: var(--accent); color: #fff; font-size: 12px; }
+
+/* Drag: the board that gets the dragged records on drop. */
+.card.drop-target { outline: 2px dashed var(--accent); outline-offset: 4px; background: var(--accent-soft); }
+
+/* A reference: the item lives on a different board. */
+.card.reference { opacity: 0.75; border-style: dashed; border-width: 1.5px; box-shadow: none; }
+.card.reference:hover { opacity: 1; }
+
+/* A note with no name: only its text. */
+.card.untitled-note { padding: 10px 12px; }
+.card.untitled-note .card-text { font-size: 13px; }
+.transformed-mark.floating { position: absolute; top: 6px; right: 6px; }
+
+/* Scribbles inside a note. */
+.inner-stamps { position: absolute; inset: 0; pointer-events: none; overflow: hidden; border-radius: inherit; }
+.stamp.inner { position: absolute; overflow: visible; }
+.card.view-note .stamp.inner path { stroke: var(--note-text); }
+.card.view-page .stamp.inner path { stroke: var(--page-text); }
+
+/* Outlines. */
+.outline-frame {
+  width: 100%;
+  height: 100%;
+  border: 1px dashed var(--border-strong);
+  border-radius: 10px;
+  background: rgba(138, 146, 242, 0.04);
+}
+.outline-frame.selected { border-color: var(--accent); border-style: solid; }
+.outline-frame.shape-edit { border-color: var(--accent); border-style: solid; }
+.shape-done { position: absolute; right: 8px; bottom: -30px; padding: 2px 10px; border-radius: 6px; border: 1px solid var(--accent); background: var(--accent); color: #fff; font-size: 12px; cursor: pointer; }
+.outline-frame.drop-target { border-color: var(--accent); background: var(--accent-soft); }
+.outline-bar { height: 26px; display: flex; align-items: center; gap: 6px; padding: 0 8px; color: var(--text-faint); cursor: grab; }
+.outline-tools { display: inline-flex; gap: 2px; opacity: 0; transition: opacity 0.12s; }
+.outline-frame:hover .outline-tools, .outline-frame.selected .outline-tools { opacity: 1; }
+.outline-marker { flex: none; margin-right: 4px; font-variant-numeric: tabular-nums; color: var(--accent); font-weight: 600; }
+.card.view-note .outline-marker, .card.view-page .outline-marker { color: #4b4fb8; }
+.react-flow__edge.edge-sequence .react-flow__edge-path { stroke: var(--accent); opacity: 0.7; }
+.react-flow__edge.edge-outline-child .react-flow__edge-path { stroke: var(--accent); }
+.card.drop-target { box-shadow: 0 0 0 2px var(--accent) !important; }
+/* A card with its own color: all its text uses the card text color. */
+.card.custom-color .card-preview,
+.card.custom-color .card-icon,
+.card.custom-color .card-type,
+.card.custom-color .untitled,
+.card.custom-color .outline-marker { color: inherit; opacity: 0.75; }
+.card.custom-color.view-page { background-image: none !important; }
+.note-collapse { position: absolute; top: 4px; right: 4px; z-index: 1; }
+.note-name { position: absolute; top: 4px; right: 26px; z-index: 1; }
+
+/* Objects. */
+/* Comment: dark, electric pink text, a signature. */
+.card.view-comment { background: #141218; border-color: #ff2bd6; color: #ff2bd6; box-shadow: 0 2px 10px rgba(255, 43, 214, 0.18); gap: 4px; padding: 8px 10px; }
+.card.view-comment.selected { box-shadow: 0 0 0 1px #ff2bd6, 0 2px 10px rgba(255, 43, 214, 0.3); }
+.card.view-comment .untitled { color: rgba(255, 43, 214, 0.55); }
+.comment-head { display: flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600; }
+.comment-time { margin-left: auto; font-weight: 400; opacity: 0.6; }
+.comment-quote { font-size: 11px; font-style: italic; opacity: 0.75; border-left: 2px solid #ff2bd6; padding-left: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: none; }
+.comment-text { font-size: 13px; }
+.card.view-comment .card-body-input { background: #1f1b25; color: #ff2bd6; border-color: #ff2bd6; }
+/* Web link: dark blue. */
+.card.view-weblink { background: #0d2457; border-color: #2f5fd0; color: #dbe6ff; gap: 4px; padding: 0 8px; justify-content: center; }
+.card.view-weblink.selected { border-color: #8fb0ff; box-shadow: 0 0 0 1px #8fb0ff; }
+.card.view-weblink .card-icon { color: #8fb0ff; }
+/* A saved page with notes: solid blue. A double-click opens the saved copy (src/ui/web/annotatedPages.ts). */
+.card.view-weblink.weblink-annotated { background: #2f5fd0; border-color: #6f93ff; color: #fff; }
+.card.view-weblink.weblink-annotated .weblink-icon, .card.view-weblink.weblink-annotated .card-icon { color: #fff; }
+.weblink-icon { color: #8fb0ff; flex: none; }
+.weblink-url { display: block; text-align: left; padding: 0; background: none; border: none; color: #8fb0ff; font-size: 11px; text-decoration: underline; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; cursor: pointer; }
+/* A link object with its full name (nodes.tsx isFullLink): up to 480 px wide, then more lines. */
+.card.view-weblink.link-full { width: max-content; max-width: 480px; height: auto; min-height: 36px; padding: 7px 8px; }
+.card.view-weblink.link-full .card-title { align-items: flex-start; }
+.card.view-weblink.link-full .weblink-icon { margin-top: 2px; }
+.card.view-weblink.link-full .card-name { white-space: normal; overflow-wrap: anywhere; }
+.card.view-weblink .card-title-input { background: #132f6e; color: #dbe6ff; border-color: #2f5fd0; }
+/* Action item: half-transparent fluorescent film (color from the card). */
+.card.view-todo { color: #111; border-width: 1px; box-shadow: none; mix-blend-mode: normal; padding: 8px 30px 8px 10px; backdrop-filter: saturate(1.4); }
+.card.view-todo .untitled { color: rgba(0, 0, 0, 0.45); }
+.card.view-todo .card-text { font-weight: 500; }
+/* An action item edits its text on the film (no edit box), like a note. */
+.card.view-todo .card-body-input { background: transparent; color: #111; border: none; padding: 0; outline: none; font: inherit; font-weight: 500; line-height: 1.45; }
+/* While it is edited, it grows to the sticky note size (or stays larger), over its neighbors. */
+.card.view-todo.todo-editing { width: max(100%, 200px); height: max(100%, 160px); position: relative; z-index: 5; }
+/* A folded action item: its first line of text, centered in the folded height. */
+.card.view-todo.todo-folded { padding: 0 10px; justify-content: center; }
+.card.view-todo.todo-folded .card-text { height: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.3; }
+/* An opened card in a full calendar day: over its neighbors. */
+.card.calendar-popped { box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45); }
+.card.view-todo.selected { outline: 2px solid var(--accent); outline-offset: 2px; }
+.todo-done { position: absolute; top: 6px; right: 6px; width: 20px; height: 20px; padding: 0; border-radius: 5px; border: 1.5px solid rgba(0, 0, 0, 0.55); background: rgba(255, 255, 255, 0.35); color: rgba(0, 0, 0, 0.0); display: inline-flex; align-items: center; justify-content: center; }
+/* The Done box of an action item shows only while the pointer is over the card. */
+.card.view-todo:not(:hover) .todo-done { display: none; }
+.todo-done:hover { color: #111; background: rgba(255, 255, 255, 0.7); }
+/* Flashcard: cornflower blue, two sides. */
+.card.view-flashcard { background: #6495ed; border-color: #4a77d4; color: #fff; align-items: center; justify-content: center; text-align: center; padding: 14px 8px 8px; perspective: 600px; }
+.card.view-flashcard.flipped { background: #4f7fd9; }
+.card.view-flashcard.selected { box-shadow: 0 0 0 2px #fff, 0 2px 10px rgba(0, 0, 0, 0.35); }
+.card.view-flashcard .untitled { color: rgba(255, 255, 255, 0.7); font-weight: 400; font-size: 15px; }
+.flash-face { font-size: 15px; font-weight: 600; line-height: 1.35; white-space: pre-wrap; overflow: auto; max-height: 100%; width: 100%; animation: flash-flip 0.28s ease; }
+.card.view-flashcard.flipped .flash-face { font-weight: 400; font-size: 14px; }
+@keyframes flash-flip { from { transform: rotateY(90deg); opacity: 0.2; } to { transform: rotateY(0); opacity: 1; } }
+.flash-side-label { position: absolute; top: 3px; left: 6px; font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.75; display: inline-flex; align-items: center; gap: 3px; }
+.card.view-flashcard .card-title-input, .card.view-flashcard .card-body-input { background: rgba(255, 255, 255, 0.92); color: #1a2a55; }
+/* Lines from attached objects to their card. */
+.react-flow__edge.edge-attach .react-flow__edge-path { stroke: #ff2bd6; stroke-dasharray: 3 4; opacity: 0.6; }
+
+/* Groups. */
+.group-icon.outline { color: #3fbf6a; }
+.group-icon.calendar { color: #4a90ff; }
+/* A group title: like a board title, one level smaller. */
+.group-name { font-size: 14px; font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 320px; cursor: text; }
+.group-name.untitled { color: var(--text-faint); font-weight: 600; }
+.calendar-bar .group-name { font-size: 16px; }
+.calendar-month-input { font-size: 12px; padding: 2px 4px; }
+.outline-bar .card-title-input, .calendar-bar .card-title-input { width: 200px; flex: none; font-size: 12px; }
+.card.group-board-outline { border-left-color: #3fbf6a; }
+.card.group-board-outline .card-type { color: #3fbf6a; }
+.card.group-board-calendar { border-left-color: #4a90ff; }
+.card.group-board-calendar .card-type { color: #4a90ff; }
+.calendar-frame { width: 100%; height: 100%; border: 1px solid rgba(74, 144, 255, 0.55); border-radius: 10px; background: rgba(74, 144, 255, 0.05); display: flex; flex-direction: column; }
+.calendar-frame.selected { border-color: #4a90ff; box-shadow: 0 0 0 1px #4a90ff; }
+.calendar-frame.drop-target { background: rgba(74, 144, 255, 0.12); }
+.calendar-bar { display: flex; align-items: center; gap: 6px; color: var(--text-faint); cursor: grab; flex: none; }
+.calendar-bar .spacer { flex: 1; }
+.calendar-month { font-weight: 600; font-size: 13px; color: var(--text); min-width: 120px; text-align: center; }
+.calendar-weekdays { display: grid; align-items: center; flex: none; font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.calendar-weekdays span { padding-left: 6px; }
+.calendar-grid { display: grid; flex: none; border-top: 1px solid var(--border); border-left: 1px solid var(--border); }
+.calendar-cell { border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); position: relative; }
+.calendar-cell.weekend { background: rgba(255, 255, 255, 0.02); }
+.calendar-cell.outside { background: rgba(0, 0, 0, 0.1); }
+.calendar-cell.outside .calendar-day { opacity: 0.5; }
+.calendar-cell.today .calendar-day { background: #4a90ff; color: #fff; }
+.calendar-day { position: absolute; top: 3px; left: 5px; font-size: 11px; color: var(--text-muted); border-radius: 8px; padding: 0 5px; line-height: 16px; }
+/* A card in a calendar day has the size of its day. */
+.card.in-calendar.collapsed { width: 100%; max-width: none; }
+/* The tools of a card: in the title row. In a calendar day, the card is narrow: they lie over its top-right corner,
+   and the text never moves or shrinks when they show. */
+.card-tools { display: contents; }
+.card.in-calendar .card-tools { display: flex; align-items: center; position: absolute; top: 2px; right: 2px; z-index: 2; border-radius: 6px; }
+.card.in-calendar:hover .card-tools, .card.in-calendar.selected .card-tools { background: rgba(0, 0, 0, 0.35); }
+.card.in-calendar.view-note:hover .card-tools, .card.in-calendar.view-note.selected .card-tools { background: rgba(255, 255, 255, 0.75); }
+/* A calendar card has the same padding in all its states: its text stays at the same place. */
+.card.in-calendar, .card.in-calendar.collapsed, .card.in-calendar.untitled-note { padding: 4px 8px; }
+.card.in-calendar.collapsed { justify-content: flex-start; }
+.card.in-calendar .card-title { min-height: 20px; }
+.card.in-calendar { font-size: 12px; }
+.comment-actions { display: inline-flex; gap: 2px; }
+.card.view-comment .card-icon { color: #ff2bd6; width: 18px; height: 18px; }
+.comment-thread { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+.comment-reply { font-size: 12px; border-top: 1px solid rgba(255, 43, 214, 0.25); padding-top: 3px; white-space: pre-wrap; }
+.comment-reply .comment-author { font-weight: 600; font-size: 11px; }
+.comment-reply-input { width: 100%; resize: none; background: #1f1b25; color: #ff2bd6; border: 1px solid #ff2bd6; border-radius: 4px; font: inherit; font-size: 12px; padding: 3px 5px; }
+/* A link object in edit mode: name and link in one form (it can be taller than the card). */
+.card.view-weblink.editing-link { overflow: visible; height: auto; min-height: 100%; width: max(100%, 300px); padding: 8px; justify-content: flex-start; position: relative; z-index: 5; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45); }
+.link-fields { display: flex; flex-direction: column; gap: 6px; }
+.link-fields label { display: grid; grid-template-columns: 38px 1fr; align-items: center; gap: 6px; font-size: 11px; color: #8fb0ff; }
+.link-fields input { width: 100%; }
+.link-fields-hint { font-size: 10px; color: #8fb0ff; opacity: 0.8; }
+/* Calendar: the time of a card, and the other week rows of a card on more than one day. */
+.card-time-label { flex: none; font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; opacity: 0.75; }
+.calendar-frame { position: relative; }
+/* A board background image: it lies on the board (it pans and zooms with the cards), under them. */
+/* A folded card while its text is edited: it grows down over its neighbors. */
+.card.editing-folded { height: auto; min-height: 100%; min-width: 220px; position: relative; z-index: 5; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45); }
+.card.editing-folded .card-body-input, .card.editing-folded textarea { min-height: 120px; }
+
+/* Quote card: newsprint paper, dark gray serif text, framed by quotation marks (nodes.tsx QuoteCard).
+   Slim by default (small top and bottom edges); the height grows with the text. */
+.card.view-quote { height: auto; background: #f4eed9; border-color: #e2d7b4; color: #3b3a36; padding: 12px 34px 9px; gap: 4px; justify-content: center; font-family: "PT Serif", "Songti SC", "Songti TC", "Hiragino Mincho ProN", Georgia, serif; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25); }
+.card.view-quote.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 2px 8px rgba(0, 0, 0, 0.25); }
+.card.view-quote.quote-marks-none { padding-inline: 18px; }
+.quote-text { font-size: 14px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.quote-source { font-size: 11.5px; color: #7a7465; font-style: italic; text-align: right; overflow-wrap: anywhere; }
+.quote-source:lang(zh), .quote-source:lang(ja) { font-style: normal; }
+.quote-mark { position: absolute; color: #c9b98a; line-height: 1; pointer-events: none; font-size: 28px; }
+.quote-mark.open { top: 3px; left: 11px; }
+.quote-mark.close { bottom: 3px; right: 11px; }
+/* ‘ ’ and “ ” sit high in their line: the closing one goes a little lower (still inside the card). */
+.quote-marks-en .quote-mark.close, .quote-marks-zh .quote-mark.close { bottom: -6px; }
+.quote-marks-es .quote-mark { font-size: 22px; }
+.quote-marks-es .quote-mark.open { top: 6px; }
+.quote-marks-es .quote-mark.close { bottom: 6px; }
+.quote-marks-cjk .quote-mark { font-size: 18px; }
+.quote-marks-cjk .quote-mark.open { top: 6px; left: 9px; }
+.quote-marks-cjk .quote-mark.close { bottom: 6px; right: 9px; }
+.card.view-quote .card-body-input, .card.view-quote .card-title-input { background: rgba(255, 255, 255, 0.55); color: #3b3a36; border-color: #e2d7b4; font-family: inherit; }
+.card.view-quote .card-body-input { min-height: 3.2em; font-size: 14px; line-height: 1.55; }
+.quote-fold { position: absolute; top: 3px; right: 3px; color: #7a7465; }
+/* Folded: a small speech bubble with the first two words. */
+.card.view-quote.quote-bubble { width: max-content; max-width: 220px; height: 100%; padding: 0 12px; border-radius: 14px 14px 14px 4px; background: #e8e8ec; border-color: #d1d1d6; color: #3a3a3c; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2); justify-content: center; font-size: 13px; overflow: visible; }
+.card.view-quote.quote-bubble::after { content: ""; position: absolute; left: 6px; bottom: -6px; width: 10px; height: 8px; background: inherit; border-left: 1px solid #d1d1d6; border-bottom: 1px solid #d1d1d6; transform: skewX(-30deg); border-bottom-left-radius: 3px; }
+.quote-bubble-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

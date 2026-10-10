@@ -1,0 +1,31 @@
+# Inspoboard translate plugin. A separate program: the core app does not compile it.
+# Build: see README.md.
+[package]
+name = "inspoboard-translate"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+publish = false
+
+# Not a member of any workspace: it builds alone.
+[workspace]
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+# HTTPS only, for language pack downloads. No other network use.
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+llama-cpp-2 = { version = "0.1.159", default-features = false, features = ["metal"] }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+llama-cpp-2 = { version = "0.1.159", default-features = false }
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+lto = "thin"
+strip = true

@@ -1,0 +1,7 @@
+{
+  "protocol": 1,
+  "title": "Translate",
+  "version": "0.1.0",
+  "exec": "inspoboard-translate",
+  "capabilities": ["transform-text"]
+}

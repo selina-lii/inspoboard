@@ -1,0 +1,252 @@
+.workspace {
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-template-rows: 40px 40px 1fr;
+  height: 100%;
+}
+.topbar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+.topbar .spacer, .toolbar .spacer { flex: 1; }
+.bars { display: contents; }
+
+/* Zen mode: the board fills the window. The buttons that the user keeps float in one small bar at the top. */
+.workspace.zen { grid-template-rows: 1fr; position: relative; }
+.workspace.zen .board-area { grid-row: 1; }
+.workspace.zen .bars {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  max-width: calc(100% - 32px);
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  opacity: 0.85;
+}
+.workspace.zen .bars:hover { opacity: 1; }
+.workspace.zen .topbar, .workspace.zen .toolbar { border: 0; background: none; padding: 0; height: 36px; gap: 2px; }
+.workspace.zen .divider { display: none; }
+.workspace.zen .topbar:empty { display: none; }
+.breadcrumb { display: flex; align-items: center; gap: 2px; min-width: 0; overflow: hidden; }
+.breadcrumb button { white-space: nowrap; max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+.breadcrumb .current { color: var(--text); font-weight: 600; }
+.breadcrumb .separator { color: var(--text-faint); }
+.save-status { color: var(--text-faint); }
+.save-status.error { color: var(--danger); }
+.save-status.spin svg { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.topbar .divider { width: 1px; height: 20px; background: var(--border); margin: 0 6px; }
+
+.toolbar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+.toolbar .divider { width: 1px; height: 20px; background: var(--border); margin: 0 6px; }
+.segmented { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: visible; }
+.segmented button { border-radius: 0; padding: 0; width: 32px; height: 30px; display: inline-flex; align-items: center; justify-content: center; }
+.segmented button.active { background: var(--accent-soft); color: var(--accent); }
+
+/* Tooltips. Native title tooltips do not show in every webview. */
+[data-tip] { position: relative; }
+[data-tip]:hover::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  white-space: nowrap;
+  pointer-events: none;
+  background: var(--bg-raised);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  padding: 3px 7px;
+  font-size: 12px;
+  font-weight: 400;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+[data-tip-end]:hover::after { left: auto; right: 0; transform: none; }
+[data-tip-start]:hover::after { left: 0; transform: none; }
+
+.board-area { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: var(--bg-board); }
+
+.muted { color: var(--text-muted); }
+
+.banner {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 560px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+.banner.error { border-color: var(--danger); }
+.banner .row { display: flex; gap: 8px; align-items: center; }
+
+.picker {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.picker .card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 24px;
+  width: 420px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.picker h1 { margin: 0; font-size: 20px; }
+.picker .error { color: var(--danger); }
+.text-editor { height: 100%; }
+.breadcrumb-input { font-weight: 600; width: 220px; padding: 2px 6px; }
+.context-bar { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.context-name { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.context-field { width: 140px; padding: 3px 6px; }
+.field { display: flex; flex-direction: column; gap: 4px; color: var(--text-muted); font-size: 12px; }
+.view-error { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 24px; text-align: center; }
+.view-error code { color: var(--danger); max-width: 600px; white-space: pre-wrap; }
+.cap-select { position: relative; }
+.cap-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 50;
+  display: grid;
+  grid-template-columns: repeat(3, 32px);
+  gap: 2px;
+  padding: 4px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.context-menu {
+  position: fixed;
+  z-index: 2000;
+  min-width: 200px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+}
+.context-menu button { display: flex; align-items: center; gap: 8px; text-align: left; padding: 6px 10px; border-radius: 5px; font-size: 13px; }
+.context-menu button:hover:not(:disabled) { background: var(--accent); color: #fff; }
+/* A one-line choice row in a menu (ContextMenu "choices"). */
+.context-menu-choices { display: flex; align-items: center; gap: 6px; padding: 3px 6px 3px 10px; }
+.context-menu-choices-label { color: var(--text-muted); flex: none; }
+.context-menu-choices-buttons { display: inline-flex; gap: 2px; margin-left: auto; }
+.context-menu .context-menu-choices-buttons button { min-width: 28px; height: 24px; padding: 0 5px; justify-content: center; font-family: "PT Serif", "Songti SC", Georgia, serif; font-size: 14px; border: 1px solid transparent; }
+.context-menu .context-menu-choices-buttons button.active { background: var(--accent); color: #fff; }
+.context-menu-icon { display: inline-flex; width: 16px; color: inherit; }
+.context-menu-separator { height: 1px; margin: 4px 6px; background: var(--border); }
+.view-toggle { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 10px; border: 1px solid var(--border); font-size: 12px; font-weight: 600; letter-spacing: 0.02em; }
+.view-toggle:hover { border-color: var(--accent); color: var(--accent); }
+.pick-banner {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 999px;
+  font-size: 13px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+.pick-banner button { background: rgba(255, 255, 255, 0.2); color: #fff; padding: 3px 10px; border-radius: 999px; }
+.view-toggle.active { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+
+.color-manager { position: relative; display: inline-flex; }
+.color-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 900;
+  width: 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5);
+}
+.color-section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--text-muted); }
+.swatches { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.swatch { width: 22px; height: 22px; padding: 0; border-radius: 50%; border: 1px solid var(--border-strong); cursor: pointer; }
+.swatch.active { box-shadow: 0 0 0 2px var(--accent); }
+.swatch:disabled { opacity: 0.35; cursor: default; }
+.swatch.custom { position: relative; overflow: hidden; background: conic-gradient(red, yellow, lime, cyan, blue, magenta, red); }
+.swatch.custom input { position: absolute; inset: -4px; opacity: 0; cursor: pointer; }
+.context-menu-colors { display: flex; gap: 6px; padding: 6px 10px; } .context-menu-color { width: 20px; height: 20px; padding: 0; border-radius: 50%; border: 1px solid rgba(255, 255, 255, 0.4); } .context-menu-color:hover { transform: scale(1.15); }
+/* A tool that stays on (double-click): a dot under it. */
+.icon-button.sticky { position: relative; }
+.icon-button.sticky::after { content: ""; position: absolute; bottom: 2px; left: 50%; width: 4px; height: 4px; margin-left: -2px; border-radius: 50%; background: var(--accent); }
+.tool-choice { position: relative; display: inline-flex; }
+.tool-choice-button { width: auto; gap: 1px; padding: 0 4px; }
+.tool-choice-arrow { opacity: 0.6; }
+.tool-choice-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 900;
+  min-width: 250px;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5);
+}
+.tool-choice-menu button { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; text-align: left; font-size: 13px; background: none; }
+.tool-choice-menu button:hover, .tool-choice-menu button.active { background: var(--bg-hover); }
+.tool-choice-menu button span { flex: 1; }
+.tool-choice-menu kbd { font-size: 10px; color: var(--text-faint); font-family: var(--font-mono); }
+.tool-choice-hint { font-size: 11px; color: var(--text-faint); padding: 4px 8px 2px; }
+/* The tools of an open text page in the main tool bar. */
+.page-tool-slot, .page-tools { display: contents; }
+
+/* A dialog or popover moves by a drag on its title (src/ui/app/movable.tsx). */
+.movable-handle { cursor: grab; user-select: none; -webkit-user-select: none; touch-action: none; }
+.movable-handle:active { cursor: grabbing; }

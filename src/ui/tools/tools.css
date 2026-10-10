@@ -1,0 +1,14 @@
+.draw-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 5;
+  cursor: crosshair;
+  touch-action: none;
+}
+.draw-overlay path { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.draw-overlay.lasso path { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 4 4; fill: var(--accent-soft); }
+.draw-overlay.scribble path { stroke: var(--text); stroke-width: 2; }
+.draw-overlay.erase { cursor: cell; }
+.draw-overlay.erase path { stroke: var(--danger); stroke-width: 10; stroke-opacity: 0.35; }

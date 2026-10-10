@@ -1,0 +1,6 @@
+{"id":"l5t8r2k9m3q6","kind":"link","from":"n7w2p9x4c8v1","to":"m4q8z1r6t3y9","label":"depends on","group":"design"}
+{"id":"p1a1a1a1a1a1","kind":"place","from":"a1b2c3d4e5f6","to":"k3f9a2m7q1xz","view":"page","x":0,"y":0,"w":240,"h":320}
+{"id":"p2b2b2b2b2b2","kind":"place","from":"a1b2c3d4e5f6","to":"n7w2p9x4c8v1","view":"note","x":320,"y":0,"w":200,"h":160}
+{"id":"p3c3c3c3c3c3","kind":"place","from":"n7w2p9x4c8v1","to":"m4q8z1r6t3y9","view":"note","x":0,"y":0,"w":200,"h":160}
+{"id":"p4d4d4d4d4d4","kind":"place","from":"a1b2c3d4e5f6","to":"m4q8z1r6t3y9","view":"note","x":320,"y":240,"w":200,"h":160}
+{"id":"p5e5e5e5e5e5","kind":"place","from":"a1b2c3d4e5f6","to":"s4h7d2j8f6g3","view":"text","x":600,"y":40,"w":40,"h":40}

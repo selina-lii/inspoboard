@@ -1,0 +1,26 @@
+[package]
+name = "inspoboard"
+version = "0.1.0"
+description = "Inspoboard: a recursive board of plain-text notes"
+edition = "2024"
+rust-version = "1.90"
+
+[lib]
+name = "inspoboard_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7.1", features = [] }
+
+[dependencies]
+# macos-private-api: a transparent window for the floating subtitle.
+tauri = { version = "2.12.1", features = ["macos-private-api"] }
+tauri-plugin-dialog = "2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# No default features: no HTTPS, no SSH. The app has no network code (SPEC P6).
+git2 = { version = "0.20", default-features = false, features = ["vendored-libgit2"] }
+notify-debouncer-mini = "0.6"
+
+[dev-dependencies]
+tempfile = "3"

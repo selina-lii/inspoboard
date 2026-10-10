@@ -1,0 +1,12 @@
+{"id":"08f3r8sxaaid","kind":"place","from":"a1b2c3d4e5f6","to":"z1xr26hrwccm","view":"note","x":-245.5,"y":194.5,"w":200,"h":160,"expanded":true,"outline":"765ago842vqo","day":"2026-10-10"}
+{"id":"cbmrca9b2ohv","kind":"place","from":"a1b2c3d4e5f6","to":"ref4ev6kwnmz","view":"note","x":-245.5,"y":194.5,"w":200,"h":160,"expanded":true,"outline":"765ago842vqo","day":"2026-10-15"}
+{"id":"djze6kqd2noq","kind":"link","from":"k3f9a2m7q1xz","to":"n7w2p9x4c8v1"}
+{"id":"l5t8r2k9m3q6","kind":"link","from":"n7w2p9x4c8v1","to":"m4q8z1r6t3y9","label":"depends on","group":"design","end":"none"}
+{"id":"m1to0x1l6and","kind":"place","from":"a1b2c3d4e5f6","to":"j33w5oggimed","view":"page","x":-3,"y":106,"w":240,"h":320,"expanded":true}
+{"id":"mtaq5av7rshg","kind":"place","from":"n7w2p9x4c8v1","to":"6hh37e8d9al9","view":"page","x":221,"y":142,"w":240,"h":320}
+{"id":"npvxhcz8328m","kind":"place","from":"a1b2c3d4e5f6","to":"y52qoa0iokcs","view":"weblink","x":-171,"y":-19,"w":200,"h":36,"expanded":true}
+{"id":"p1a1a1a1a1a1","kind":"place","from":"a1b2c3d4e5f6","to":"k3f9a2m7q1xz","view":"page","x":0,"y":0,"w":240,"h":320}
+{"id":"p2b2b2b2b2b2","kind":"place","from":"a1b2c3d4e5f6","to":"n7w2p9x4c8v1","view":"page","x":306,"y":-93,"w":200,"h":160,"expanded":true}
+{"id":"p3c3c3c3c3c3","kind":"place","from":"a1b2c3d4e5f6","to":"m4q8z1r6t3y9","view":"note","x":318.3,"y":185.9,"w":200,"h":160}
+{"id":"p5e5e5e5e5e5","kind":"place","from":"a1b2c3d4e5f6","to":"s4h7d2j8f6g3","view":"text","x":606,"y":100,"w":40,"h":40}
+{"id":"yjitoz6oj4aw","kind":"place","from":"n7w2p9x4c8v1","to":"e6cmsbu2x1nb","view":"page","x":221,"y":92,"w":240,"h":320}

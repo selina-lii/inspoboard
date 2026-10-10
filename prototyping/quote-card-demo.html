@@ -1,0 +1,323 @@
+<title>Quote Card Demo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=PT+Serif:ital,wght@0,400;0,700;1,400&family=Noto+Serif+SC:wght@400;600&display=swap">
+<style>
+/* Layout: an Inspoboard board (as in the app) with five quote cards, a right-click menu, and a frame switch. */
+:root {
+  /* The app around the cards: light theme of Inspoboard. */
+  --bg: #f2f2f7;
+  --board: #f2f2f7;
+  --board-dot: #d8d8dc;
+  --panel: #ffffff;
+  --border: #d8d8dc;
+  --text: #1c1c1e;
+  --muted: #6c6c70;
+  --accent: #5b63d9;
+  --shadow: rgba(0, 0, 0, 0.18);
+  /* The quote card (same in both themes): newsprint paper and dark gray ink. */
+  --paper: #f4eed9;
+  --paper-edge: #e2d7b4;
+  --ink: #3b3a36;
+  --ink-soft: #7a7465;
+  --mark: #c9b98a;
+  --serif: "PT Serif", "Noto Serif SC", "Songti SC", Georgia, serif;
+  --ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #1c1c1e; --board: #1c1c1e; --board-dot: #38383a; --panel: #2c2c2e; --border: #48484a;
+    --text: #ffffff; --muted: #a1a1a6; --accent: #8a92f2; --shadow: rgba(0, 0, 0, 0.5); color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #1c1c1e; --board: #1c1c1e; --board-dot: #38383a; --panel: #2c2c2e; --border: #48484a;
+  --text: #ffffff; --muted: #a1a1a6; --accent: #8a92f2; --shadow: rgba(0, 0, 0, 0.5); color-scheme: dark;
+}
+body { background: var(--bg); color: var(--text); font-family: var(--ui); padding: 20px 16px 40px; }
+main { max-width: 1180px; margin: 0 auto; display: grid; gap: 18px; }
+header { display: grid; gap: 6px; }
+h1 { margin: 0; font-size: 20px; font-weight: 650; text-wrap: balance; }
+.lede { margin: 0; color: var(--muted); max-width: 70ch; line-height: 1.5; }
+.controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; font-size: 13px; color: var(--muted); }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--panel); }
+.seg button { border: 0; background: none; color: var(--text); padding: 6px 12px; font: inherit; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--border); }
+.seg button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+.seg button:focus-visible, .menu button:focus-visible, .card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* The board: dots as in the app. */
+.board {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background-color: var(--board);
+  background-image: radial-gradient(var(--board-dot) 1px, transparent 1px);
+  background-size: 24px 24px;
+  padding: 36px 28px 44px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 34px 30px;
+  justify-content: center;
+  min-height: 380px;
+}
+
+/* A quote card: portrait, paper color, serif ink. */
+.card {
+  position: relative;
+  width: 320px;
+  min-height: 72px;
+  max-width: 100%;
+  padding: 16px 34px 12px;
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid var(--paper-edge);
+  border-radius: 4px;
+  box-shadow: 0 2px 10px var(--shadow);
+  font-family: var(--serif);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  cursor: context-menu;
+  user-select: none;
+}
+.card.selected { box-shadow: 0 0 0 2px var(--accent), 0 2px 10px var(--shadow); }
+.quote { margin: 0; font-size: 15px; line-height: 1.6; text-wrap: pretty; }
+.quote:lang(zh), .quote:lang(ja) { font-size: 15px; line-height: 1.8; letter-spacing: 0.02em; }
+.source { margin: 0; font-size: 12px; color: var(--ink-soft); font-style: italic; text-align: right; }
+.source:lang(zh), .source:lang(ja) { font-style: normal; }
+
+/* Frame A: one large mark at the top left, one at the bottom right. */
+.mark { position: absolute; font-family: var(--serif); color: var(--mark); line-height: 1; pointer-events: none; font-size: 30px; }
+.mark.open { top: 3px; left: 12px; }
+.mark.close { bottom: 3px; right: 12px; }
+/* ‘ ’ and “ ” sit high in their line: the closing one goes down a little, still inside the card. */
+.card[data-style="en"] .mark.close, .card[data-style="zh"] .mark.close { bottom: -6px; }
+.card[data-style="es"] .mark { font-size: 24px; }
+.card[data-style="es"] .mark.open { top: 6px; }
+.card[data-style="es"] .mark.close { bottom: 6px; }
+.card[data-style="cjk"] .mark { font-size: 20px; }
+.card[data-style="cjk"] .mark.open { top: 6px; left: 10px; }
+.card[data-style="cjk"] .mark.close { bottom: 6px; right: 10px; }
+/* The edges can be dragged: a new width and height (the height is at least as high as the text). */
+.card { resize: both; overflow: hidden; min-width: 200px; }
+.card[data-style="none"] .mark { display: none; }
+.card[data-style="none"] { padding-top: 12px; padding-bottom: 12px; padding-inline: 20px; }
+/* No source: the line does not show. */
+.source:empty { display: none; }
+
+/* Frame B: a border of small marks (drawn on a canvas behind the text). */
+.edge { position: absolute; inset: 0; pointer-events: none; display: none; }
+.frame-edge .edge { display: block; }
+.frame-edge .mark { display: none; }
+.frame-edge .card { padding: 16px 26px; }
+
+.label { position: absolute; left: 0; right: 0; bottom: -24px; text-align: center; font-family: var(--ui); font-size: 11px; color: var(--muted); letter-spacing: 0.04em; }
+
+/* The right-click menu of the app, with the one-line quote style row. */
+.menu {
+  position: fixed;
+  z-index: 10;
+  min-width: 232px;
+  padding: 5px;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px var(--shadow);
+  font-size: 13px;
+  display: grid;
+  gap: 1px;
+}
+.menu > button { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border: 0; border-radius: 5px; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.menu > button:hover { background: var(--accent); color: #fff; }
+.menu hr { border: 0; border-top: 1px solid var(--border); margin: 4px 2px; }
+.menu-row { display: flex; align-items: center; gap: 6px; padding: 4px 6px 4px 10px; }
+.menu-row span { color: var(--muted); flex: none; }
+.styles { display: inline-flex; gap: 2px; margin-left: auto; }
+.styles button { min-width: 30px; height: 26px; padding: 0 6px; border: 1px solid transparent; border-radius: 5px; background: none; color: inherit; font-family: var(--serif); font-size: 15px; cursor: pointer; }
+.styles button:hover { border-color: var(--border); }
+.styles button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+.styles button.none { font-family: var(--ui); font-size: 11px; }
+
+.notes { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.note { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; font-size: 13px; line-height: 1.5; min-width: 0; }
+.note h2 { margin: 0 0 4px; font-size: 13px; font-weight: 650; }
+.note p { margin: 0; color: var(--muted); }
+@media (prefers-reduced-motion: no-preference) { .card { transition: box-shadow 0.15s; } }
+</style>
+
+<main>
+  <header>
+    <h1>Quote card</h1>
+    <p class="lede">A small object for a passage you keep: newsprint paper, dark gray serif text, and quotation marks as its frame. Right-click (or long-press) a card to change its marks. The marks row is one line in the menu.</p>
+  </header>
+
+  <div class="controls">
+    <span>Frame of the marks</span>
+    <div class="seg" role="group" aria-label="Frame of the marks">
+      <button id="frame-corner" type="button" aria-pressed="true">Corner marks</button>
+      <button id="frame-edge" type="button" aria-pressed="false">Pattern edge</button>
+    </div>
+    <span>App theme</span>
+    <div class="seg" role="group" aria-label="App theme">
+      <button id="theme-dark" type="button" aria-pressed="false">Dark</button>
+      <button id="theme-light" type="button" aria-pressed="false">Light</button>
+    </div>
+  </div>
+
+  <section class="board" id="board" aria-label="Board with quote cards"></section>
+
+  <div class="notes">
+    <div class="note"><h2>Where it is made</h2><p>Tool bar → Create note menu → Quote. A new quote card is 320 px wide; its height follows the text. Drag its corner to change its width and height (try the handle at the bottom right). A double-click writes the text. The card name is the source line, and it can stay empty (then no source line shows).</p></div>
+    <div class="note"><h2>Marks</h2><p>‘ ’ English · 「 」 Traditional Chinese and Japanese · “ ” Chinese · « » Spanish, French · none. The default follows the text: CJK text starts with 「」, other text with ‘ ’.</p></div>
+    <div class="note"><h2>Data</h2><p>One new optional field on the placement (for example <code>marks: "cjk"</code>). Old vaults stay valid; a card without it shows the default.</p></div>
+  </div>
+</main>
+
+<div class="menu" id="menu" role="menu" hidden>
+  <button type="button" role="menuitem">Edit text</button>
+  <button type="button" role="menuitem">Edit source</button>
+  <div class="menu-row" role="group" aria-label="Quotation marks">
+    <span>Marks</span>
+    <div class="styles" id="styles"></div>
+  </div>
+  <hr>
+  <button type="button" role="menuitem">Show as note</button>
+  <button type="button" role="menuitem">Delete</button>
+</div>
+
+<script>
+const STYLES = [
+  { id: "en", open: "‘", close: "’", tip: "English" },
+  { id: "cjk", open: "「", close: "」", tip: "Traditional Chinese, Japanese" },
+  { id: "zh", open: "“", close: "”", tip: "Chinese" },
+  { id: "es", open: "«", close: "»", tip: "Spanish, French" },
+  { id: "none", open: "", close: "", tip: "No marks" },
+];
+const CARDS = [
+  { style: "en", lang: "en", text: "A woman must have money and a room of her own if she is to write fiction.", source: "Virginia Woolf" },
+  { style: "cjk", lang: "zh-Hant", text: "學而時習之，不亦說乎？有朋自遠方來，不亦樂乎？", source: "《論語・學而》" },
+  { style: "zh", lang: "zh-Hans", text: "路漫漫其修远兮，吾将上下而求索。", source: "" },
+  { style: "es", lang: "es", text: "Caminante, no hay camino, se hace camino al andar.", source: "Antonio Machado" },
+  { style: "none", lang: "en", text: "Simplicity is prerequisite for reliability.", source: "Edsger W. Dijkstra" },
+];
+const board = document.getElementById("board");
+const menu = document.getElementById("menu");
+const stylesRow = document.getElementById("styles");
+let active = null;
+
+function styleOf(id) { return STYLES.find((style) => style.id === id) ?? STYLES[0]; }
+
+function drawEdge(card) {
+  const canvas = card.querySelector(".edge");
+  const style = styleOf(card.dataset.style);
+  const box = card.getBoundingClientRect();
+  const ratio = window.devicePixelRatio || 1;
+  canvas.width = Math.round(box.width * ratio);
+  canvas.height = Math.round(box.height * ratio);
+  canvas.style.width = box.width + "px";
+  canvas.style.height = box.height + "px";
+  const context = canvas.getContext("2d");
+  context.setTransform(ratio, 0, 0, ratio, 0, 0);
+  context.clearRect(0, 0, box.width, box.height);
+  if (style.id === "none") return;
+  context.fillStyle = getComputedStyle(card).getPropertyValue("--mark").trim() || "#c9b98a";
+  context.font = "11px " + getComputedStyle(card).fontFamily;
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  const step = 15;
+  const inset = 7;
+  const glyph = (x, y, index) => context.fillText(index % 2 === 0 ? style.open : style.close, x, y);
+  let index = 0;
+  for (let x = inset; x <= box.width - inset; x += step) { glyph(x, inset, index++); glyph(x, box.height - inset, index++); }
+  for (let y = inset + step; y <= box.height - inset - step / 2; y += step) { glyph(inset, y, index++); glyph(box.width - inset, y, index++); }
+}
+
+function render(card) {
+  const style = styleOf(card.dataset.style);
+  card.querySelector(".mark.open").textContent = style.open;
+  card.querySelector(".mark.close").textContent = style.close;
+  card.querySelector(".label").textContent = style.id === "none" ? "none" : style.open + " " + style.close + "  " + style.tip;
+  drawEdge(card);
+}
+
+CARDS.forEach((data, index) => {
+  const card = document.createElement("article");
+  card.className = "card";
+  card.tabIndex = 0;
+  card.dataset.style = data.style;
+  card.setAttribute("aria-label", "Quote card " + (index + 1) + ". Press Enter for its menu.");
+  card.innerHTML = '<canvas class="edge" aria-hidden="true"></canvas><span class="mark open" aria-hidden="true"></span><p class="quote"></p><p class="source"></p><span class="mark close" aria-hidden="true"></span><span class="label"></span>';
+  card.querySelector(".quote").textContent = data.text;
+  card.querySelector(".quote").lang = data.lang;
+  card.querySelector(".source").textContent = data.source === "" ? "" : "— " + data.source;
+  card.querySelector(".source").lang = data.lang;
+  board.appendChild(card);
+  render(card);
+  card.addEventListener("contextmenu", (event) => { event.preventDefault(); openMenu(card, event.clientX, event.clientY); });
+  card.addEventListener("click", () => select(card));
+  card.addEventListener("keydown", (event) => { if (event.key === "Enter") { const box = card.getBoundingClientRect(); openMenu(card, box.right - 20, box.top + 30); } });
+  let timer = 0;
+  card.addEventListener("touchstart", (event) => { const touch = event.touches[0]; timer = setTimeout(() => openMenu(card, touch.clientX, touch.clientY), 450); }, { passive: true });
+  card.addEventListener("touchend", () => clearTimeout(timer));
+});
+
+STYLES.forEach((style) => {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.title = style.tip;
+  button.dataset.id = style.id;
+  button.textContent = style.id === "none" ? "none" : style.open + style.close;
+  if (style.id === "none") button.className = "none";
+  button.addEventListener("click", () => {
+    if (active === null) return;
+    active.dataset.style = style.id;
+    render(active);
+    updateMenu();
+  });
+  stylesRow.appendChild(button);
+});
+
+function select(card) {
+  board.querySelectorAll(".card").forEach((other) => other.classList.toggle("selected", other === card));
+}
+function updateMenu() {
+  stylesRow.querySelectorAll("button").forEach((button) => button.setAttribute("aria-pressed", String(active !== null && button.dataset.id === active.dataset.style)));
+}
+function openMenu(card, x, y) {
+  active = card;
+  select(card);
+  updateMenu();
+  menu.hidden = false;
+  const box = menu.getBoundingClientRect();
+  menu.style.left = Math.max(8, Math.min(x, window.innerWidth - box.width - 8)) + "px";
+  menu.style.top = Math.max(8, Math.min(y, window.innerHeight - box.height - 8)) + "px";
+  stylesRow.querySelector('[aria-pressed="true"]')?.focus();
+}
+function closeMenu() { menu.hidden = true; }
+document.addEventListener("pointerdown", (event) => { if (!menu.hidden && !menu.contains(event.target)) closeMenu(); });
+document.addEventListener("keydown", (event) => { if (event.key === "Escape") closeMenu(); });
+menu.querySelectorAll(":scope > button").forEach((button) => button.addEventListener("click", closeMenu));
+
+function setFrame(edge) {
+  board.classList.toggle("frame-edge", edge);
+  document.getElementById("frame-corner").setAttribute("aria-pressed", String(!edge));
+  document.getElementById("frame-edge").setAttribute("aria-pressed", String(edge));
+  board.querySelectorAll(".card").forEach(drawEdge);
+}
+document.getElementById("frame-corner").addEventListener("click", () => setFrame(false));
+document.getElementById("frame-edge").addEventListener("click", () => setFrame(true));
+
+function setTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  document.getElementById("theme-dark").setAttribute("aria-pressed", String(theme === "dark"));
+  document.getElementById("theme-light").setAttribute("aria-pressed", String(theme === "light"));
+}
+document.getElementById("theme-dark").addEventListener("click", () => setTheme("dark"));
+document.getElementById("theme-light").addEventListener("click", () => setTheme("light"));
+
+window.addEventListener("resize", () => board.querySelectorAll(".card").forEach(drawEdge));
+document.fonts?.ready.then(() => board.querySelectorAll(".card").forEach(drawEdge));
+</script>

@@ -1,0 +1,127 @@
+/* Dark theme tokens. All colors in the UI come from these variables. */
+:root {
+  color-scheme: dark;
+  /* Apple dark mode system colors (macOS / iOS). */
+  --bg: #1c1c1e; /* secondarySystemBackground */
+  --bg-board: #1c1c1e;
+  --bg-panel: #2c2c2e; /* tertiarySystemBackground */
+  --bg-raised: #3a3a3c; /* systemGray5 */
+  --bg-hover: #48484a; /* systemGray4 */
+  --border: #38383a; /* separator */
+  --border-strong: #545458; /* opaque separator */
+  --text: #ffffff; /* label */
+  --text-muted: #a1a1a6; /* secondaryLabel: rgba(235, 235, 245, 0.6) on the background */
+  --text-faint: #5f5f63; /* tertiaryLabel: rgba(235, 235, 245, 0.3) on the background */
+  --accent: #8a92f2; /* Periwinkle, after the Owala FreeSip "Out of the Blue" color. */
+  --accent-soft: rgba(138, 146, 242, 0.2);
+  --accent-hover: #a3a9f6;
+  --danger: #ff453a; /* systemRed */
+  --warning: #ffd60a; /* systemYellow */
+  --ok: #30d158; /* systemGreen */
+  /* Sticky notes: systemYellow with dark text. */
+  --note-bg: #ffd60a;
+  --note-border: #e0bb00;
+  --note-text: #1c1c1e;
+  --note-text-muted: #5c4d00;
+  /* Items with their own board: a dark panel with an accent edge. */
+  --board-card-bg: #2c2c2e;
+  /* Pages: light lilac paper. */
+  --page-bg: #ddd3f0;
+  --page-border: #b3a5d4;
+  --page-text: #1c1c1e;
+  --page-text-muted: #5d5075;
+  --edge: #8e8e93; /* systemGray */
+  --edge-ref: #0a84ff; /* systemBlue */
+  --radius: 6px;
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Inter, sans-serif;
+  --font-mono: "SF Mono", Menlo, Consolas, monospace;
+}
+
+/* Light theme tokens (Settings → Theme, or the sun/moon button): Apple light mode system colors.
+   Card kinds keep their own colors (notes, pages, comments, links, flashcards). */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f2f2f7; /* systemGroupedBackground */
+  --bg-board: #f2f2f7;
+  --bg-panel: #ffffff;
+  --bg-raised: #e5e5ea; /* systemGray5 */
+  --bg-hover: #d1d1d6; /* systemGray4 */
+  --border: #d8d8dc;
+  --border-strong: #b4b4b9;
+  --text: #1c1c1e;
+  --text-muted: #6c6c70; /* secondaryLabel */
+  --text-faint: #aeaeb2;
+  --accent: #5b63d9; /* the periwinkle, darker for contrast on white */
+  --accent-soft: rgba(91, 99, 217, 0.14);
+  --accent-hover: #4a52c8;
+  --danger: #ff3b30;
+  --warning: #e0a800;
+  --ok: #28a745;
+  --board-card-bg: #ffffff;
+  --edge: #8e8e93;
+  --edge-ref: #007aff;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  /* Settings → UI font weight. */
+  font-weight: var(--ui-weight, 400);
+  overflow: hidden;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  padding: 4px 8px;
+  cursor: pointer;
+}
+button:hover:not(:disabled) { background: var(--bg-hover); }
+button:disabled { color: var(--text-faint); cursor: default; }
+button.primary { background: var(--accent); color: #fff; }
+button.primary:hover { background: var(--accent-hover); }
+
+input, select, textarea {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px 8px;
+  outline: none;
+}
+input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+}
+.icon-button.active { background: var(--accent-soft); color: var(--accent); }
+
+/* A name that the app made (a code). Low profile: a faint chip, muted monospace text. */
+.code-name {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  background: var(--bg-raised);
+  border-radius: 4px;
+  padding: 0 5px;
+}
+input.code-name { padding: 2px 6px; }
+.card.view-note .code-name { background: rgba(0, 0, 0, 0.1); color: var(--note-text-muted); }
+.card.view-page .code-name { background: rgba(0, 0, 0, 0.08); color: var(--page-text-muted); }
+.card-name.code-name { flex: 0 1 auto; }

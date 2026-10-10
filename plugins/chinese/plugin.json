@@ -1,0 +1,7 @@
+{
+  "protocol": 1,
+  "title": "Simplified ↔ Traditional Chinese conversion",
+  "version": "0.1.0",
+  "exec": "inspoboard-chinese",
+  "capabilities": ["convert-text"]
+}

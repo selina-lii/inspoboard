@@ -1,0 +1,210 @@
+.editor-window {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  min-width: 260px;
+  min-height: 160px;
+  resize: both;
+  overflow: hidden;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
+}
+.editor-window-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 4px 4px 8px;
+  border-bottom: 1px solid var(--border);
+  cursor: grab;
+  user-select: none;
+}
+.editor-window-title { flex: 1; min-width: 0; font-weight: 600; background: transparent; border-color: transparent; }
+.editor-window-title:hover { border-color: var(--border); }
+.editor-window-body { flex: 1; min-height: 0; overflow: auto; }
+.icon-button.small { width: 26px; height: 26px; }
+
+.text-page { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; overflow: auto; }
+.text-page-head { width: min(var(--page-width, 760px), 100%); display: flex; gap: 8px; align-items: flex-start; padding: 32px 16px 8px; }
+.text-page-title { flex: 1; min-width: 0; font-size: 26px; font-weight: 700; background: transparent; border-color: transparent; }
+.text-page-title:hover { border-color: var(--border); }
+/* A long page name wraps: the whole name shows. */
+.text-page-title.wrap-field { resize: none; overflow: hidden; line-height: 1.25; font-family: inherit; color: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
+span.text-page-title { white-space: normal; overflow-wrap: anywhere; }
+.text-page-body { width: min(var(--page-width, 760px), 100%); flex: 1; }
+/* The edges of the text: a drag changes the page width (setting "pageWidth"). A double-click: 760 px. */
+.page-resize { position: absolute; top: 0; bottom: 0; width: 8px; z-index: 3; cursor: col-resize; touch-action: none; }
+.page-resize.left { left: -10px; }
+.page-resize.right { right: -10px; }
+.page-resize:hover { background: linear-gradient(90deg, transparent 3px, var(--accent) 3px, var(--accent) 5px, transparent 5px); }
+/* At the end of the text, the page scrolls on until it is empty (the last line can go to the top). */
+.text-page:not(.wide) { container-type: size; }
+.text-page:not(.wide) .text-page-body { padding-bottom: calc(100vh - 80px); padding-bottom: 100cqh; }
+.text-page.muted { justify-content: center; }
+.item-info {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 12px;
+  margin: 0;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.item-info dt { color: var(--text-faint); }
+.item-info dd { margin: 0; }
+.item-date-input { width: 100%; max-width: 220px; padding: 1px 6px; font-size: 11px; }
+.text-page-info { width: min(var(--page-width, 760px), 100%); padding: 0 16px; }
+.text-page-info .item-info { border-bottom: none; padding: 0 4px 8px; }
+.page-navigation { display: inline-flex; gap: 2px; }
+
+/* Document view of an outline: one continuous text. */
+.document-view { position: absolute; inset: 0; overflow: auto; background: var(--bg); }
+.document-column { max-width: 780px; margin: 0 auto; padding: 32px 24px 120px; }
+.document-section { border-bottom: 1px solid var(--border); padding: 18px 0 10px; }
+.document-section:last-child { border-bottom: none; }
+.document-title { display: flex; align-items: baseline; gap: 6px; font-size: 20px; font-weight: 700; }
+.document-title.sub { font-size: 16px; }
+.document-title-input { flex: 1; font: inherit; background: transparent; border: none; padding: 2px 0; color: var(--text); }
+.document-title-input:focus { outline: none; border-bottom: 1px solid var(--accent); }
+.document-section .text-editor .cm-content { padding: 6px 0; }
+
+/* Side by side: the text at the left, the plugin result (for example a translation) at the right. */
+.split-view { display: flex; height: 100%; min-height: 0; }
+.split-pane { flex: 0 0 auto; min-width: 0; overflow: auto; }
+.split-pane.result { flex: 1 1 0; padding: 0 12px; }
+.split-pane .text-editor { height: 100%; }
+.split-divider { flex: none; width: 7px; cursor: col-resize; position: relative; touch-action: none; }
+.split-divider::after { content: ""; position: absolute; inset: 0 3px; background: var(--border); }
+.split-divider:hover::after { background: var(--accent); inset: 0 2px; }
+.split-title { font-weight: 600; padding: 12px 2px 4px; color: var(--text-muted); }
+.text-page.wide { overflow: hidden; }
+.text-page.wide .text-page-head, .text-page.wide .text-page-body { width: min(1500px, 100%); }
+.text-page.wide .text-page-body { min-height: 0; }
+
+/* Comments at the side of a text page: tight at the right edge of the text. All show in full: the column scrolls with the page. */
+.text-page-body { position: relative; }
+.comment-column {
+  position: absolute;
+  top: 0;
+  left: calc(100% + 12px);
+  width: 250px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 2;
+}
+/* The right edge of the comment column: drag it to change the width. */
+.comment-resize { position: absolute; top: 0; bottom: 0; right: -6px; width: 6px; cursor: ew-resize; touch-action: none; border-radius: 3px; }
+.comment-resize:hover { background: var(--accent); opacity: 0.6; }
+.comment-head.movable, .page-note-head.movable { cursor: grab; user-select: none; touch-action: none; }
+.comment-entry.dragging, .page-note.dragging { cursor: grabbing; position: relative; z-index: 4; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45); }
+/* A small item that the user put somewhere in the page: over the text or in the margin. */
+.page-object.placed { position: absolute; width: 250px; z-index: 3; }
+.comment-entry.folded { padding: 4px 8px; gap: 2px; }
+.comment-text.folded { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: 0.85; }
+.comment-reply-count { font-size: 10px; font-weight: 700; padding: 0 5px; border-radius: 7px; background: rgba(255, 43, 214, 0.2); }
+/* A sticky note in a page. */
+.page-note { background: var(--note-bg); color: var(--note-text); border: 1px solid var(--note-border); border-radius: var(--radius); padding: 6px 10px 10px; display: flex; flex-direction: column; gap: 4px; min-height: 90px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35); font-size: 13px; }
+.page-note-head { display: flex; align-items: center; gap: 4px; color: var(--note-text-muted); }
+.page-note-head .spacer { flex: 1; }
+.page-note-head .icon-button.small { width: 20px; height: 20px; color: var(--note-text-muted); }
+.page-note-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45; }
+.page-note-text .untitled { color: var(--note-text-muted); }
+.page-note-input { width: 100%; min-height: 80px; resize: vertical; background: transparent; border: none; outline: none; color: inherit; font: inherit; line-height: 1.45; padding: 0; }
+.comment-entry { background: #141218; border: 1px solid #ff2bd6; border-radius: var(--radius); color: #ff2bd6; padding: 8px 10px; display: flex; flex-direction: column; gap: 5px; font-size: 13px; }
+.comment-entry .comment-head { display: flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600; }
+.comment-entry .comment-time { margin-left: auto; font-weight: 400; opacity: 0.6; }
+.comment-entry .comment-quote { text-align: left; background: none; border: none; border-left: 2px solid #ff2bd6; padding: 0 0 0 6px; color: inherit; font-size: 11px; font-style: italic; opacity: 0.8; cursor: pointer; }
+.comment-entry .comment-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45; }
+.comment-entry .untitled { color: rgba(255, 43, 214, 0.55); }
+.comment-entry .comment-delete { color: rgba(255, 43, 214, 0.6); width: 20px; height: 20px; }
+.comment-input { width: 100%; min-height: 60px; resize: vertical; background: #1f1b25; color: #ff2bd6; border: 1px solid #ff2bd6; border-radius: 4px; font: inherit; padding: 4px; }
+.comment-empty { font-size: 11px; color: var(--text-faint); }
+.comment-link { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: var(--radius); background: #0d2457; border: 1px solid #2f5fd0; color: #dbe6ff; font-size: 12px; text-align: left; }
+.comment-link span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The comments never make the text narrower: they are always at its side (the page scrolls sideways if the window is narrow). */
+.comment-entry.resolved { opacity: 0.6; }
+.comment-entry .icon-button.small { width: 20px; height: 20px; color: rgba(255, 43, 214, 0.75); }
+.comment-reply-entry { border-top: 1px solid rgba(255, 43, 214, 0.25); padding-top: 5px; display: flex; flex-direction: column; gap: 4px; }
+.comment-resolved-toggle { align-self: flex-start; background: none; border: none; color: var(--text-muted); font-size: 11px; text-decoration: underline; padding: 0; }
+.comment-toggle { position: relative; }
+.comment-count { position: absolute; top: 1px; right: 0; min-width: 14px; height: 14px; padding: 0 3px; border-radius: 7px; background: #ff2bd6; color: #141218; font-size: 9px; font-weight: 700; line-height: 14px; }
+
+/* Marks: highlights and scribbles on the text of an item. */
+.mark-tools { display: inline-flex; align-items: center; gap: 2px; }
+.mark-colors { display: inline-flex; gap: 3px; padding: 0 4px; }
+.mark-color { width: 13px; height: 13px; padding: 0; border-radius: 50%; border: 2px solid transparent; }
+.mark-color.active { border-color: var(--text); }
+.scribble-layer { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; z-index: 3; }
+.scribble-layer path { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.scribble-layer.pen { pointer-events: auto; cursor: crosshair; }
+.scribble-layer.erase .scribble-hit { pointer-events: stroke; cursor: pointer; }
+.text-editor.marking-erase .cm-content { cursor: cell; }
+.text-editor.marking-highlight .cm-content { cursor: text; }
+/* "This text can be a copy" (DuplicateWarning.tsx). */
+.duplicate-warning { display: flex; align-items: center; gap: 8px; margin: 4px 12px; padding: 4px 8px; border: 1px solid var(--warning, #e0a800); border-radius: var(--radius); font-size: 12px; color: var(--text-muted); background: rgba(224, 168, 0, 0.08); flex: none; }
+.duplicate-warning span { flex: 1; min-width: 0; }
+.duplicate-warning button:not(.icon-button) { font-size: 12px; padding: 2px 8px; }
+/* Side by side, paragraph-aligned (ItemBody AlignedSplit): one scroll area; the panes grow with their text. */
+.split-wrap { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.split-head { flex: none; font-weight: 600; color: var(--text-muted); padding: 8px 12px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* "scroll", not "auto": the scroll bar always takes its place. Else the alignment spaces could make it come and go,
+   the text would wrap again, and the alignment would change again (the text flickers). */
+.split-view.aligned { flex: 1; min-height: 0; overflow-y: scroll; height: auto; }
+.split-view.aligned .split-pane { overflow: visible; }
+.split-view.aligned .split-pane.result { padding: 0 16px; }
+.split-view.aligned .text-editor { height: auto; }
+.split-view.aligned .cm-editor { height: auto !important; }
+.split-view.aligned .cm-scroller { overflow: visible !important; }
+.aligned-result { font-family: var(--font-ui); font-size: 14px; line-height: 1.6; color: var(--text); }
+.aligned-text { overflow-wrap: anywhere; }
+.aligned-line { white-space: pre-wrap; }
+.aligned-line.md-h1 { font-size: 1.6em; font-weight: 700; }
+.aligned-line.md-h2 { font-size: 1.35em; font-weight: 700; }
+.aligned-line.md-h3 { font-size: 1.15em; font-weight: 600; }
+.aligned-line.md-h4 { font-weight: 600; }
+/* An image in a text: under its Markdown, as wide as the text at most. */
+.cm-md-image { display: block; margin: 6px 0; }
+.cm-md-image img { display: block; max-width: 100%; max-height: 70vh; border-radius: 4px; }
+.cm-md-image.missing { display: inline; color: var(--text-faint); font-style: italic; font-size: 0.9em; }
+.editor-error { display: flex; align-items: center; gap: 8px; margin: 6px 0; padding: 4px 8px; border: 1px solid #ff6b6b; border-radius: var(--radius); color: #ff6b6b; font-size: 12px; }
+.editor-error span { flex: 1; }
+/* Resize handles of an image in a text: the right edge and the bottom-right corner (on hover). */
+.cm-md-image-frame { position: relative; display: inline-block; max-width: 100%; }
+.cm-md-image-frame img { max-width: 100%; height: auto; }
+.cm-md-image-handle { position: absolute; opacity: 0; background: var(--accent); border-radius: 3px; touch-action: none; z-index: 1; }
+.cm-md-image-handle.right { top: 50%; right: -4px; width: 7px; height: 36px; margin-top: -18px; cursor: ew-resize; }
+.cm-md-image-handle.corner { right: -5px; bottom: -5px; width: 11px; height: 11px; border-radius: 50%; cursor: nwse-resize; }
+.cm-md-image:hover .cm-md-image-handle, .cm-md-image.resizing .cm-md-image-handle { opacity: 0.85; }
+.cm-md-image.resizing img { outline: 2px solid var(--accent); }
+/* A sized image keeps its shape: no height limit. */
+.cm-md-image-frame img[style*="width"] { max-height: none; }
+
+/* The hover card of a link to an item (src/ui/editor/linkCard.ts). */
+.cm-tooltip.cm-tooltip-hover:has(.cm-link-card) { border: none; background: transparent; }
+.cm-link-card { max-width: 320px; padding: 8px 10px; display: grid; gap: 3px; background: var(--bg-panel); color: var(--text); border: 1px solid var(--border-strong); border-radius: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35); font-family: var(--font-ui); font-size: 12px; }
+.cm-link-card-head { display: flex; align-items: center; gap: 8px; }
+.cm-link-card-title { flex: 1; min-width: 0; font-weight: 600; font-size: 13px; overflow-wrap: anywhere; }
+.cm-link-card-go { flex: none; padding: 2px 10px; border-radius: 999px; border: none; background: var(--accent); color: #fff; font-size: 12px; cursor: pointer; }
+.cm-link-card-path { color: var(--text-muted); font-size: 11px; }
+.cm-link-card-excerpt { color: var(--text-muted); font-style: italic; border-left: 2px solid var(--border-strong); padding-left: 6px; }
+
+/* The links of a page, under its text (TextPage PageLinks). */
+.page-links { margin: 18px 4px 0; padding-top: 10px; border-top: 1px solid var(--border); display: grid; gap: 10px; font-size: 13px; }
+.page-links-group { display: grid; gap: 4px; }
+.page-links-head { color: var(--text-muted); font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; }
+.page-link { display: grid; grid-template-columns: 16px 1fr; gap: 2px 6px; align-items: baseline; text-align: left; padding: 5px 8px; border-radius: var(--radius); border: 1px solid transparent; background: none; color: inherit; cursor: pointer; }
+.page-link:hover { background: var(--bg-hover); }
+.page-link svg { color: var(--accent); align-self: center; }
+.page-link-title { font-weight: 600; overflow-wrap: anywhere; }
+.page-link-meta { grid-column: 2; color: var(--text-muted); font-size: 11.5px; overflow-wrap: anywhere; }
+
+/* Scribbles on the whole width of a text page (marks.tsx PageScribbleLayer). Above the text and the comments. */
+.scribble-layer.page-scribbles { z-index: 6; }
+.scribble-layer.lasso { pointer-events: auto; cursor: crosshair; }
+.scribble-layer.lasso .scribble-hit.chosen { pointer-events: stroke; cursor: move; }
+.scribble-layer .scribble-selection { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1; stroke-dasharray: 4 3; pointer-events: none; }
+.scribble-layer.lasso .scribble-selection { pointer-events: all; cursor: move; }
+.scribble-layer .scribble-lasso { fill: rgba(138, 146, 242, 0.08); stroke: var(--accent); stroke-width: 1.2; stroke-dasharray: 5 4; }

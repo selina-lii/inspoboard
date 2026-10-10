@@ -1,0 +1,7 @@
+{
+  "protocol": 1,
+  "title": "Read aloud",
+  "version": "0.1.0",
+  "exec": "inspoboard-voice",
+  "capabilities": ["speak-text"]
+}

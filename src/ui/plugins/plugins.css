@@ -1,0 +1,174 @@
+.plugin-menu { position: relative; display: inline-flex; }
+.plugin-menu > .icon-button { gap: 4px; width: auto; min-width: 30px; padding: 0 6px; }
+.plugin-percent { font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.plugin-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 900;
+  width: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5);
+}
+.plugin-popover-title { color: var(--text-muted); font-size: 12px; }
+.plugin-options { display: grid; gap: 6px; }
+.plugin-options label { display: grid; grid-template-columns: 48px 1fr; align-items: center; gap: 8px; font-size: 13px; }
+.plugin-options select { min-width: 0; }
+.plugin-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+.plugin-job { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.plugin-job progress { flex: 1; min-width: 60px; accent-color: var(--accent); }
+.plugin-error { color: var(--danger); font-size: 12px; overflow-wrap: anywhere; }
+.plugin-note { font-size: 11px; }
+
+.plugin-settings { border-top: 1px solid var(--border); margin-top: 6px; padding: 10px 14px 4px; display: flex; flex-direction: column; gap: 8px; }
+.plugin-settings-head { display: flex; align-items: center; gap: 4px; }
+.plugin-folder { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); }
+.plugin-entry { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius); }
+.plugin-entry-head { display: flex; align-items: center; gap: 6px; }
+.plugin-action { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13px; }
+.plugin-action button { flex: none; }
+
+.transformed-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 999px;
+}
+.transformed-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; padding: 4px 2px; user-select: text; }
+.card .transformed-mark { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex: none; }
+
+.speech-layer {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  z-index: 800;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: min(900px, calc(100% - 32px));
+  pointer-events: none;
+}
+.speech-layer > * { pointer-events: auto; }
+.speech-subtitle {
+  max-width: 100%;
+  padding: 12px 20px;
+  font-size: 28px;
+  line-height: 1.35;
+  text-align: center;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.72);
+  border-radius: 12px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+}
+.speech-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+}
+.speech-count { font-size: 12px; font-variant-numeric: tabular-nums; min-width: 48px; text-align: center; }
+.speech-slider { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.speech-slider input { width: 90px; accent-color: var(--accent); }
+/* The sentence that is read now: a strong yellow mark. The other sentences are dimmed. */
+.spoken-text mark {
+  background: #ffd60a;
+  color: #1a1a1a;
+  font-weight: 600;
+  border-radius: 3px;
+  box-shadow: 0 0 0 3px #ffd60a, 0 0 14px 4px rgba(255, 214, 10, 0.45);
+  transition: background 0.15s;
+}
+.spoken-text .spoken-sentence { opacity: 0.55; }
+.spoken-text .spoken-sentence:hover { opacity: 1; }
+.plugin-modes { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.plugin-modes button { border-radius: 0; font-size: 12px; padding: 4px 10px; }
+.plugin-modes button.active { background: var(--accent-soft); color: var(--accent); }
+.transformed-chip.quiet { background: transparent; border: 1px solid var(--accent-soft); }
+.spoken-sentence { cursor: pointer; border-radius: 3px; }
+.spoken-sentence:hover { background: rgba(138, 146, 242, 0.12); }
+
+/* Text options (for example a pitch in Hz). */
+.plugin-options input { min-width: 0; }
+.plugin-options input.invalid { border-color: var(--danger); }
+.plugin-check { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; cursor: pointer; }
+.plugin-check input { margin-top: 2px; accent-color: var(--accent); }
+.plugin-check input:disabled + span { opacity: 0.45; }
+.plugin-example { display: block; color: var(--text-faint); font-size: 11px; }
+.plugin-skip { font-size: 12px; display: flex; flex-direction: column; gap: 6px; }
+.plugin-skip summary { cursor: pointer; color: var(--text-muted); }
+.plugin-skip[open] summary { margin-bottom: 4px; }
+.plugin-skip[open] { display: flex; }
+.plugin-skip-group { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-faint); margin-top: 4px; }
+.plugin-popover { width: 320px; max-height: calc(100vh - 110px); overflow-y: auto; }
+
+/* The line that matches the spoken sentence, in the text that is not read. */
+.line-marked .line-mark {
+  background: rgba(255, 214, 10, 0.22);
+  box-shadow: inset 3px 0 0 #ffd60a;
+  border-radius: 3px;
+  padding-left: 6px;
+  margin-left: -6px;
+}
+.line-marked .spoken-line { cursor: pointer; opacity: 0.6; border-radius: 3px; }
+.line-marked .spoken-line:hover { opacity: 1; background: rgba(138, 146, 242, 0.12); }
+.transformed-chips { display: inline-flex; align-items: center; gap: 4px; flex: none; }
+.transformed-chip.warn { color: #ffb340; border-color: rgba(255, 179, 64, 0.5); background: rgba(255, 179, 64, 0.1); }
+
+/* "Translate" for selected text. */
+.selection-translate { position: fixed; z-index: 950; }
+.selection-translate-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+}
+.selection-translate-panel {
+  width: 320px;
+  max-height: 50vh;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5);
+}
+.selection-translate-head { display: flex; align-items: flex-start; gap: 6px; }
+.selection-translate-head .plugin-options { flex: 1; }
+.selection-translate-text { overflow: auto; white-space: pre-wrap; line-height: 1.55; user-select: text; font-size: 14px; }
+.plugin-save { display: flex; flex-direction: column; align-items: stretch; gap: 4px; }
+.plugin-save button { text-align: left; font-size: 12px; }
+.plugin-select-row { align-items: center; justify-content: space-between; cursor: default; } .plugin-select-row select { max-width: 150px; }
+.selection-translate-head { cursor: grab; touch-action: none; } .selection-translate-head:active { cursor: grabbing; }
+.option-text { display: inline-flex; align-items: center; gap: 4px; min-width: 0; } .option-text input { flex: 1; min-width: 0; } .option-unit { font-size: 12px; color: var(--text-muted); }
+/* The read-aloud bar is at the bottom of the board: its tooltips show above it (below, they would be cut off). */
+.speech-layer [data-tip]:hover::after { top: auto; bottom: calc(100% + 6px); }
+.speech-left { font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.plugin-check.plugin-indent { padding-left: 20px; }
+
+/* The 簡/繁 plugin icon: two characters in the size of an icon. */
+.han-icon { display: inline-flex; align-items: center; line-height: 1; letter-spacing: -0.04em; white-space: nowrap; font-weight: 500; }
+.speech-subtitle-second { display: block; margin-top: 6px; font-size: 0.72em; font-weight: 400; opacity: 0.85; }
+.speech-prepare { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-variant-numeric: tabular-nums; }

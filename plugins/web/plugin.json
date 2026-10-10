@@ -1,0 +1,7 @@
+{
+  "protocol": 1,
+  "title": "Web pages",
+  "version": "0.1.0",
+  "exec": "inspoboard-web",
+  "capabilities": ["save-page"]
+}

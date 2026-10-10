@@ -1,0 +1,44 @@
+{
+ "version": 1,
+ "highlights": [
+  {
+   "id": "qjDpCbWvc0",
+   "start": 30364,
+   "end": 30403,
+   "quote": "\nSOM oriens/lacunosum-moleculare cells\n",
+   "color": "blue"
+  },
+  {
+   "id": "HjbuBTrwzJ",
+   "start": 30764,
+   "end": 30785,
+   "quote": "oriens/alveus border.",
+   "color": "blue"
+  },
+  {
+   "id": "pt5Vx1MljT",
+   "start": 30764,
+   "end": 30785,
+   "quote": "oriens/alveus border.",
+   "color": "blue"
+  },
+  {
+   "id": "gHKyfWGPmd",
+   "start": 30365,
+   "end": 30402,
+   "quote": "SOM oriens/lacunosum-moleculare cells",
+   "color": "blue"
+  },
+  {
+   "id": "NyhG6Wt8Es",
+   "start": 30697,
+   "end": 31003,
+   "quote": " constitute the majority of horizontal fusiform somata at the str. oriens/alveus border. Their horizontally oriented dendrites run parallel to the alveus, often forming dendritic tufts in the alveus (Lacaille et al. 1987; Maccaferri et al. 2000; Sík et al. 1995). In CA1, the dendrites of OLM cells rarely,",
+   "color": "blue"
+  }
+ ],
+ "scribbles": [],
+ "items": [],
+ "margin": 500,
+ "width": 720
+}

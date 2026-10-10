@@ -1,0 +1,20 @@
+# Inspoboard Chinese script plugin. A separate program: the core app does not compile it.
+# Build: see README.md.
+[package]
+name = "inspoboard-chinese"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+publish = false
+
+# Not a member of any workspace: it builds alone.
+[workspace]
+
+[dependencies]
+serde_json = "1.0"
+# Simplified ↔ Traditional conversion (OpenCC and MediaWiki rules, built into the program). No network.
+zhconv = "0.3"
+
+[profile.release]
+lto = "thin"
+strip = true
