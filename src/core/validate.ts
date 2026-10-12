@@ -5,7 +5,7 @@ import { isId } from "./ids";
 import type { GraphIndex } from "./graph";
 import type { Problem } from "./problems";
 import type { Store } from "./store";
-import { LINK_CAPS, LIST_STYLES, VIEW_STYLES, type Id, type TableName, QUOTE_MARKS } from "./types";
+import { GROUP_SHAPES, LINK_CAPS, LIST_STYLES, SMALL_VIEWS, VIEW_STYLES, type Id, type TableName, QUOTE_MARKS } from "./types";
 
 /** Returns a list of schema errors. An empty list means the record is valid. */
 export function schemaErrors(table: TableName, value: unknown): string[] {
@@ -79,6 +79,9 @@ export function schemaErrors(table: TableName, value: unknown): string[] {
         allow("until", isDay, 'a day "YYYY-MM-DD"');
         allow("time", isTime, 'a time "HH:MM" or "HH:MM–HH:MM"');
         allow("marks", (v) => QUOTE_MARKS.includes(v as never), `one of ${QUOTE_MARKS.join(", ")}`);
+        allow("shape", (v) => GROUP_SHAPES.includes(v as never), `one of ${GROUP_SHAPES.join(", ")}`);
+        allow("shapePath", isStampPath, "an SVG path (commands and numbers only)");
+        allow("filled", (v) => v === true, "true");
         if (record.until !== undefined && (typeof record.day !== "string" || (record.until as string) <= record.day)) errors.push(`Field "until" must be a day after "day".`);
         if (record.until !== undefined && record.time !== undefined) errors.push(`A card with "until" (more than one day) cannot have "time".`);
       } else if (record.kind === "link") {
@@ -88,8 +91,20 @@ export function schemaErrors(table: TableName, value: unknown): string[] {
         allow("end", (v) => LINK_CAPS.includes(v as never), `one of ${LINK_CAPS.join(", ")}`);
         allow("quote", isNonEmptyString, "a non-empty string");
         allow("fromQuote", isNonEmptyString, "a non-empty string");
+      } else if (record.kind === "inside") {
+        need("view", (v) => SMALL_VIEWS.includes(v as never), `one of ${SMALL_VIEWS.join(", ")}`);
+        allow("x", isFiniteNumber, "a number");
+        allow("y", isFiniteNumber, "a number");
+        if ((record.x === undefined) !== (record.y === undefined)) errors.push(`Fields "x" and "y" must both be there, or both be missing.`);
+        allow("w", (v) => isFiniteNumber(v) && (v as number) > 0, "a number above 0");
+        allow("h", (v) => isFiniteNumber(v) && (v as number) > 0, "a number above 0");
+        allow("color", isColor, 'a color "#rrggbb"');
+        allow("expanded", (v) => typeof v === "boolean", "true or false");
+        allow("quote", isNonEmptyString, "a non-empty string");
+        allow("at", (v) => Number.isInteger(v) && (v as number) >= 0, "a whole number, 0 or more");
+        if (record.at !== undefined && record.quote === undefined) errors.push(`Field "at" needs "quote".`);
       } else {
-        errors.push(`Field "kind" must be "place" or "link".`);
+        errors.push(`Field "kind" must be "place", "link", or "inside".`);
       }
       break;
   }
@@ -108,6 +123,14 @@ export function referenceProblems(store: Store, graph: GraphIndex, rootId: Id): 
         severity: "warning",
         code: "link-from-stamp",
         message: `Link "${link.id}" starts at a stamp. Only items can be boards or link sources.`,
+        recordId: link.id,
+      });
+    }
+    if (link.kind === "inside" && (store.has("stamps", link.to) || store.has("stamps", link.from))) {
+      problems.push({
+        severity: "warning",
+        code: "inside-stamp",
+        message: `Link "${link.id}" puts a stamp inside an item, or an item inside a stamp. Only items can be inside items.`,
         recordId: link.id,
       });
     }

@@ -1,7 +1,7 @@
 // Tool bar buttons for plugins that transform text (for example a translator) or read text aloud. See docs/PLUGINS.md.
 // The core knows nothing about what a plugin does. It shows the plugin options and sends item texts.
 
-import { AudioLines, Globe, Languages, LoaderCircle, Puzzle, Sparkles, Wand2, X } from "lucide-react";
+import { AudioLines, Globe, Languages, LoaderCircle, Puzzle, Sigma, Sparkles, Wand2, X } from "lucide-react";
 import { MovablePanel } from "../app/movable";
 import { useEffect, useRef, useState, type ComponentType } from "react";
 import type { Id } from "../../core/types";
@@ -35,7 +35,7 @@ function HanIcon({ size = 16, options }: { size?: number; options?: Readonly<Rec
 }
 
 /** Icons that a plugin can name in its "info" reply. */
-export const PLUGIN_ICONS: Record<string, PluginIconType> = { languages: Languages, sparkles: Sparkles, wand: Wand2, speech: AudioLines, globe: Globe, han: HanIcon };
+export const PLUGIN_ICONS: Record<string, PluginIconType> = { languages: Languages, sparkles: Sparkles, wand: Wand2, speech: AudioLines, globe: Globe, han: HanIcon, sigma: Sigma };
 
 /** The capabilities that get a tool bar button. */
 const MENU_CAPABILITIES = ["transform-text", "convert-text", "speak-text"];
@@ -77,6 +77,7 @@ function PluginButton({ plugin, selectedIds: boardSelection, boardItemIds, scope
   // "convert-text": the result replaces the text in the vault (undo gives it back). No view overlay.
   const converts = plugin.capabilities.includes("convert-text") && !transforms;
   const speaks = plugin.capabilities.includes("speak-text") && speech !== null;
+  const mathPlugin = speaks ? plugins.plugins.find((entry) => entry.details !== null && entry.capabilities.includes("math-text")) : undefined;
   // No item selected on the board, but text selected in a note window or a card: that item is the current item.
   const textItem = open ? selectedTextItem() : null;
   const selectedIds = boardSelection.length === 0 && textItem !== null ? [textItem] : boardSelection;
@@ -165,34 +166,71 @@ function PluginButton({ plugin, selectedIds: boardSelection, boardItemIds, scope
                   <option value="all">All audio first, then play</option>
                 </select>
               </label>
+              {/* A "math-text" plugin: how read-aloud says formulas. */}
+              {mathPlugin !== undefined &&
+                mathPlugin.details!.options.map((option) =>
+                  option.kind === "choice" ? (
+                    <label key={option.key} className="plugin-check plugin-select-row" data-tip={mathPlugin.details!.description}>
+                      <span>{option.label}</span>
+                      <select value={plugins.optionsOf(mathPlugin.name)[option.key] ?? option.default} onChange={(event) => plugins.setOption(mathPlugin.name, option.key, event.target.value)}>
+                        {option.choices.map((choice) => (
+                          <option key={choice.value} value={choice.value}>
+                            {choice.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : null,
+                )}
               <SkipOptions />
               <div className="plugin-buttons">
-                <button
-                  className="primary"
-                  disabled={readTarget === null && web?.page == null}
-                  data-tip={readTarget === null && web?.page == null ? "Select one note or page, or open a web page" : undefined}
-                  onClick={() => {
-                    setOpen(false);
-                    // An open web page or PDF: read it (from the selection, or from the top).
-                    if (web?.page != null) {
-                      web.reader.current?.readFromSelection();
-                      return;
-                    }
-                    if (readTarget === null) return;
-                    // A link object: save its page, open it, and read it.
-                    const url = session.store.get("items", readTarget)?.url;
-                    if (url !== undefined && url !== "") actions.openUrl(url, true);
-                    else void speech.read(plugin.name, readTarget);
-                  }}
-                >
-                  Read aloud
-                </button>
+                {/* Three ways to read: from the start, the selected text only, from the selected text on. */}
+                {(["start", "selection", "fromSelection"] as const).map((mode) => {
+                  const none = readTarget === null && web?.page == null;
+                  // The selected text: in the open web page or PDF, or in the note or page.
+                  const selected = web?.page != null ? web.reader.current?.hasSelection() === true : readTarget !== null && hasItemSelection(readTarget);
+                  const disabled = none || (mode !== "start" && !selected);
+                  const label = mode === "start" ? "Read from the start" : mode === "selection" ? "Read selected text" : "Read from the selection";
+                  return (
+                    <button
+                      key={mode}
+                      className={mode === "start" ? "primary" : undefined}
+                      disabled={disabled}
+                      data-tip={none ? "Select one note or page, or open a web page" : disabled ? "Select text first" : undefined}
+                      onClick={() => {
+                        setOpen(false);
+                        // An open web page or PDF: read it.
+                        if (web?.page != null) {
+                          web.reader.current?.read(mode);
+                          return;
+                        }
+                        if (readTarget === null) return;
+                        // A link object: save its page, open it, and read it from the start.
+                        const url = session.store.get("items", readTarget)?.url;
+                        if (url !== undefined && url !== "") actions.openUrl(url, true, undefined, readTarget);
+                        else void speech.read(plugin.name, readTarget, mode);
+                      }}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
                 <button disabled={readTarget === null || plugins.job !== null} onClick={() => readTarget !== null && void speech.saveAudio(plugin.name, readTarget)}>
                   Save audio file…
                 </button>
               </div>
               <ListenEstimate target={web?.page != null ? "page" : readTarget} rate={settings.speechRate} />
             </>
+          )}
+          {/* The same order as Read aloud: the options, the view settings (rows), what to skip, then the buttons. */}
+          {transforms && job === null && (
+            <label className="plugin-check plugin-select-row">
+              <span>Show the result</span>
+              <select value={settings.transformLayout} onChange={(event) => void session.updateSettings({ transformLayout: event.target.value as "replace" | "side" })}>
+                <option value="replace">In place of the text</option>
+                <option value="side">Side by side</option>
+              </select>
+            </label>
           )}
           {transforms && job === null && <SkipOptions field="translateSkip" title="Do not translate (keep as it is)" />}
           {transforms && job === null && web?.page != null && (
@@ -280,16 +318,6 @@ function PluginButton({ plugin, selectedIds: boardSelection, boardItemIds, scope
                 {details.title === "Translate" ? `All translations of this session (${mine.length})…` : `All results of this session (${mine.length})…`}
               </button>
               {saved !== null && <span className="plugin-note muted">{`Saved: ${saved}`}</span>}
-            </div>
-          )}
-          {transforms && (
-            <div className="plugin-modes" role="group" aria-label="Show the result">
-              <button className={settings.transformLayout === "replace" ? "active" : undefined} onClick={() => void session.updateSettings({ transformLayout: "replace" })}>
-                In place of the text
-              </button>
-              <button className={settings.transformLayout === "side" ? "active" : undefined} onClick={() => void session.updateSettings({ transformLayout: "side" })}>
-                Side by side
-              </button>
             </div>
           )}
           {transforms && <div className="plugin-note muted">Results stay while the app is open. They are not saved in the vault. “Save to a file” writes a copy.</div>}
@@ -418,4 +446,10 @@ function SkipOptions({ field = "speechSkip", title = "Do not read" }: { field?: 
       {SKIP_CHOICES.filter((choice) => choice.group === "list").map(row)}
     </details>
   );
+}
+
+/** True if text is selected in the note or page of an item (its editor keeps the last selection). */
+function hasItemSelection(itemId: Id): boolean {
+  const selection = selectionOf(itemId);
+  return selection !== undefined && selection.to > selection.from;
 }

@@ -104,3 +104,11 @@ describe("read-aloud with a translation", () => {
     expect(matchingLine(0, 1, 4)).toBe(0);
   });
 });
+
+describe("plain letters for speech", () => {
+  it("reads math letters as their plain letters", async () => {
+    const { plainLetters } = await import("../src/ui/plugins/reading");
+    expect(plainLetters("𝑃(𝑿 = 𝒙)")).toBe("P(X = x)");
+    expect(plainLetters("x²")).toBe("x2");
+  });
+});

@@ -17,7 +17,7 @@ import type { GraphIndex } from "./graph";
 import { linearize } from "./linearize";
 import type { Words } from "./words";
 import { Store } from "./store";
-import type { Id, ItemRecord, LinkRecord, OutlineRecord, PlaceLink, StampRecord, TableName, TableRecords, TextRecord } from "./types";
+import type { Id, InsideLink, ItemRecord, LinkRecord, OutlineRecord, PlaceLink, StampRecord, TableName, TableRecords, TextRecord } from "./types";
 
 /** Text links in a body: [label](item:<id>) and [label](link:<id>). */
 const TEXT_LINK = /\[([^\]\n]*)\]\((item|link):([0-9a-z]{12})\)/g;
@@ -39,6 +39,7 @@ export function collectBoard(store: Store, graph: GraphIndex, boardId: Id): Stor
   const items = new Set<Id>();
   const stamps = new Set<Id>();
   const places: PlaceLink[] = [];
+  const inside: InsideLink[] = [];
   const outlines: OutlineRecord[] = [];
   const queue: Id[] = [boardId];
   const addItem = (id: Id) => {
@@ -57,6 +58,12 @@ export function collectBoard(store: Store, graph: GraphIndex, boardId: Id): Stor
     outlines.push(...graph.outlinesOn(id));
     // Comments, notes, and links of an item, and the replies of a comment (they have no placement).
     for (const object of graph.attachedTo(id)) addItem(object.id);
+    // The small items inside a page or a link object.
+    for (const link of graph.insideOf(id)) {
+      if (!store.has("items", link.to)) continue;
+      inside.push(link);
+      addItem(link.to);
+    }
   }
   const write = <T extends TableName>(table: T, records: Iterable<TableRecords[T]>) => out.write([...records].map((record) => ({ table, id: record.id, after: record })));
   write("items", [...items].map((id) => store.get("items", id)!));
@@ -75,6 +82,7 @@ export function collectBoard(store: Store, graph: GraphIndex, boardId: Id): Stor
       return home;
     }),
   );
+  write("links", inside);
   // Relation links between two records of the bundle.
   write(
     "links",
@@ -192,7 +200,7 @@ function remapLink(link: LinkRecord, source: Store, newId: (id: Id) => Id): Link
   const fromKnown = source.has("items", link.from);
   const toKnown = source.has("items", link.to) || (link.kind === "place" && source.has("stamps", link.to));
   if (!fromKnown || !toKnown) return null;
-  if (link.kind === "link") return { ...link, id: newId(link.id), from: newId(link.from), to: newId(link.to) };
+  if (link.kind === "link" || link.kind === "inside") return { ...link, id: newId(link.id), from: newId(link.from), to: newId(link.to) };
   const after: PlaceLink = { ...link, id: newId(link.id), from: newId(link.from), to: newId(link.to) };
   if (link.outline !== undefined) {
     if (source.has("outlines", link.outline)) after.outline = newId(link.outline);

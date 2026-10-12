@@ -23,6 +23,9 @@ import {
   renameGroup,
   setCalendarRange,
   snapToDay,
+  reorderInDay,
+  dayOrder,
+  cardsByDay,
 } from "../src/core/groups";
 import { linearize } from "../src/core/linearize";
 import { createOutline, removeFromOutline } from "../src/core/outline";
@@ -45,6 +48,20 @@ function withCalendar() {
 }
 
 describe("calendar groups", () => {
+  it("orders the cards of a day by creation, and a drag gives them a new order", () => {
+    const { context, calendarId } = withCalendar();
+    context.history.run(snapToDay(context, [TOOL_PLACE, INTEGRITY_ON_ROOT], calendarId, "2026-01-15"));
+    const order = () => (cardsByDay(context.store, context.graph, calendarId).get("2026-01-15") ?? []).sort(dayOrder(context.store)).map((place) => place.id);
+    const before = order();
+    expect(before).toHaveLength(2);
+    // The second card goes first.
+    context.history.run(reorderInDay(context, before[1]!, before[0]!));
+    expect(order()).toEqual([before[1], before[0]]);
+    // A move to a different day takes its order away: it is ordered by creation there.
+    context.history.run(snapToDay(context, [before[1]!], calendarId, "2026-01-16"));
+    expect((context.store.get("links", before[1]!) as { rank?: number }).rank).toBeUndefined();
+  });
+
   it("cards can span days (no time) or have a time (one day); a move keeps the length", () => {
     const { context, calendarId } = withCalendar();
     context.history.run(snapToDay(context, [TOOL_PLACE], calendarId, "2026-01-15"));

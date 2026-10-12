@@ -15,6 +15,7 @@
   --accent: #8a92f2; /* Periwinkle, after the Owala FreeSip "Out of the Blue" color. */
   --accent-soft: rgba(138, 146, 242, 0.2);
   --accent-hover: #a3a9f6;
+  --group-shape: #9a9aa2; /* group cards: a quiet gray edge and fill */
   --danger: #ff453a; /* systemRed */
   --warning: #ffd60a; /* systemYellow */
   --ok: #30d158; /* systemGreen */
@@ -54,6 +55,7 @@
   --accent: #5b63d9; /* the periwinkle, darker for contrast on white */
   --accent-soft: rgba(91, 99, 217, 0.14);
   --accent-hover: #4a52c8;
+  --group-shape: #8e8e93;
   --danger: #ff3b30;
   --warning: #e0a800;
   --ok: #28a745;

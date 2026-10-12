@@ -2,8 +2,8 @@
 // Layout: top bar, tool bar, then the board (2D), the galaxy (3D), or the full text page.
 // Item text opens in floating windows above the view.
 
-import { ArrowLeft, ArrowRight, Box, Maximize2, Check, Columns2, Dot, Minimize2, ScrollText, ListChecks, LoaderCircle, Lock, Plus, Redo2, Settings, Square, Trash2, TriangleAlert, Undo2 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowLeft, ArrowRight, Box, Link2, Check, Ellipsis, Columns2, Dot, Minimize2, ScrollText, ListChecks, LoaderCircle, Lock, Plus, Redo2, Settings, Square, Trash2, TriangleAlert, Undo2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { isComposing } from "./keys";
 import { collapseAll, createItemOnBoard, createRelation, DEFAULT_SIZE, placeRecord, renameItem, writeText } from "../../core/actions";
 import type { Command } from "../../core/commands";
@@ -16,17 +16,18 @@ import { forgetViewport } from "../board/viewports";
 import { titleOf } from "../board/boardModel";
 import { ItemPicker, type PickResult } from "../dialogs/ItemPicker";
 import { SearchDialog } from "../dialogs/SearchDialog";
-import { SettingsDialog } from "../dialogs/SettingsDialog";
+import { SettingsDialog, type SettingsSection } from "../dialogs/SettingsDialog";
 import { GalaxyView } from "../galaxy/GalaxyView";
 import { PluginMenu } from "../plugins/PluginMenu";
 import { PluginsProvider } from "../plugins/pluginsContext";
 import { SpeechProvider } from "../plugins/speech";
 import { SpeechBar } from "../plugins/SpeechBar";
 import { SelectionTranslate } from "../plugins/SelectionTranslate";
-import { ReaderToolSlot, WebButton, WebOpener, WebPagesProvider, WebReaderLayer, WhenNoPage } from "../web/WebPages";
+import { ReaderEndSlot, ReaderToolSlot, useWebPages, WebButton, WebOpener, WebPagesProvider, WebReaderLayer, WhenNoPage } from "../web/WebPages";
 import { FieldsDialog, type FieldsRequest } from "../dialogs/FieldsDialog";
 import { ActionItemsDialog } from "../dialogs/ActionItemsDialog";
 import { TrashDialog } from "../dialogs/TrashDialog";
+import { LinkBench, toggleBench } from "./LinkBench";
 import { TOOL_MENUS, TOOLBAR_GROUPS, TOOLS, toolById, type ToolId } from "../tools/registry";
 import { ToolChoice } from "../tools/ToolChoice";
 import { EditorWindows, type EditorWindowState } from "../windows/EditorWindows";
@@ -35,7 +36,12 @@ import { TextPage } from "../windows/TextPage";
 import { PageToolSlotContext } from "./pageToolSlot";
 import { Banners } from "./Banners";
 import { ColorManager } from "./ColorManager";
-import { BackupButton } from "./BackupButton";
+import { Archive } from "lucide-react";
+import { BackupButton, useBackup } from "./BackupButton";
+import { ContextMenu, type MenuRequest } from "./ContextMenu";
+import { FOLDED_BUTTONS } from "./zen";
+import { ZenIcon } from "./ZenIcon";
+import { PenColors } from "../board/PenColors";
 import { ContextBar } from "./ContextBar";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { CommitField } from "./fields";
@@ -92,13 +98,14 @@ export function Workspace({ zenRequest = 0 }: { zenRequest?: number }) {
   const [trashOpen, setTrashOpen] = useState(false);
   const [fieldsRequest, setFieldsRequest] = useState<(FieldsRequest & { resolve(values: Record<string, string> | null): void }) | null>(null);
   /** Web pages: the provider is inside this component, so it gives its open function by a ref. */
-  const openUrlRef = useRef<(url: string, read?: boolean, find?: string) => void>(() => undefined);
-  const jumpRef = useRef<(url: string) => void>(() => undefined);
+  const openUrlRef = useRef<(url: string, read?: boolean, find?: string, itemId?: Id) => void>(() => undefined);
+  const jumpRef = useRef<(url: string, itemId?: Id) => void>(() => undefined);
   const browserRef = useRef<(url: string) => void>(() => undefined);
   const [searchOpen, setSearchOpen] = useState(false);
   /** A search for a link target (link tool: right-click or "Search…"). It resolves with the chosen hit. */
   const [targetSearch, setTargetSearch] = useState<{ resolve(result: { itemId: Id; quote?: string } | null): void } | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  /** The open Settings dialog, at this section (null: closed). */
+  const [settingsOpen, setSettingsOpen] = useState<SettingsSection | null>(null);
   /** Zen mode: only the buttons in the setting "zenButtons" show, in a small floating bar. View > Zen Mode turns it on, Esc turns it off. */
   const [zen, setZen] = useState(false);
   const lastZenRequest = useRef(zenRequest);
@@ -199,7 +206,7 @@ export function Workspace({ zenRequest = 0 }: { zenRequest?: number }) {
       const url = session.store.get("items", itemId)?.url;
       const inPage = target.quote !== undefined ? !body.includes(target.quote) : target.from === undefined;
       if (url !== undefined && url !== "" && inPage && !session.graph.isBoardItem(itemId)) {
-        openUrlRef.current(url, false, target.quote);
+        openUrlRef.current(url, false, target.quote, itemId);
         return;
       }
       const range = rangeOf(body, target);
@@ -290,7 +297,8 @@ export function Workspace({ zenRequest = 0 }: { zenRequest?: number }) {
       if (linkPick !== null || tool !== "select" || stickyTool) return;
       const target = event.target instanceof HTMLElement ? event.target : null;
       if (target !== null && (target.isContentEditable || target.closest("input, textarea, select, .cm-editor") !== null)) return;
-      if (document.querySelector('[role="dialog"], [role="menu"], .context-menu') !== null) return;
+      // The link bench is a panel that stays open: it does not block Esc.
+      if (document.querySelector('[role="dialog"]:not(.link-bench), [role="menu"], .context-menu') !== null) return;
       setZen(false);
     };
     window.addEventListener("keydown", onKeyDown);
@@ -307,8 +315,8 @@ export function Workspace({ zenRequest = 0 }: { zenRequest?: number }) {
       searchLinkTarget: () => new Promise((resolve) => setTargetSearch({ resolve })),
       searchTextLinkTarget: () => setSearchOpen(true),
       askFields: (request) => new Promise((resolve) => setFieldsRequest({ ...request, resolve })),
-      openUrl: (url, read, find) => openUrlRef.current(url, read, find),
-      jumpTo: (url) => jumpRef.current(url),
+      openUrl: (url, read, find, itemId) => openUrlRef.current(url, read, find, itemId),
+      jumpTo: (url, itemId) => jumpRef.current(url, itemId),
       openInBrowser: (url) => browserRef.current(url),
       createTextLink,
       followLink,
@@ -323,6 +331,18 @@ export function Workspace({ zenRequest = 0 }: { zenRequest?: number }) {
     if (result === null) picker.resolve(null);
     else if (result.kind === "existing") picker.resolve(result.id);
     else picker.resolve(createOnBoard(result.name));
+  };
+
+  /**
+   * A link object for a page that opens with none (SPEC 1.1: a saved copy belongs to a link object): a new link card
+   * on the current board, at the center of the view. One undo step. Null if the vault is read-only.
+   */
+  const makeLinkObject = (url: string, name: string): Id | null => {
+    if (session.getState().readOnly) return null;
+    const center = boardApi.current?.viewCenter() ?? { x: 0, y: 0 };
+    const size = DEFAULT_SIZE.weblink;
+    const { command, itemId } = createItemOnBoard(session.context, { boardId: boardIdRef.current, view: "weblink", x: Math.round(center.x - size.w / 2), y: Math.round(center.y - size.h / 2), url, name });
+    return runCommand(command) ? itemId : null;
   };
 
   /** "+": put an existing item (or a new one) on the current board, at the center of the view. */
@@ -352,7 +372,7 @@ export function Workspace({ zenRequest = 0 }: { zenRequest?: number }) {
     // A hit in a saved web page: the page opens, and finds the text.
     const pageUrl = hit.field === "page" ? session.store.get("items", hit.recordId)?.url : undefined;
     if (pageUrl !== undefined && linkPick === null) {
-      openUrlRef.current(pageUrl, false, query);
+      openUrlRef.current(pageUrl, false, query, hit.recordId);
       return;
     }
     const link = session.store.get("links", hit.recordId);
@@ -409,7 +429,7 @@ export function Workspace({ zenRequest = 0 }: { zenRequest?: number }) {
      <JumpProvider value={jump}>
      <PluginsProvider>
       <SpeechProvider onShowItem={(itemId) => (textOnly && itemId === boardId ? undefined : openText(itemId))}>
-      <WebPagesProvider>
+      <WebPagesProvider makeHome={makeLinkObject}>
       <div className={`workspace${zen ? " zen" : ""}`}>
         <div className="bars">
         {zen && (
@@ -419,6 +439,8 @@ export function Workspace({ zenRequest = 0 }: { zenRequest?: number }) {
         )}
         <TopBar
           shown={shown}
+          pinned={(id) => (zen ? state.settings.zenButtons.includes(id) : state.settings.topBarButtons.includes(id))}
+          zen={zen}
           navigation={navigation}
           path={path}
           onNavigate={(index) => setPath((current) => current.slice(0, index + 1))}
@@ -426,7 +448,7 @@ export function Workspace({ zenRequest = 0 }: { zenRequest?: number }) {
           onActionItems={() => setActionItemsOpen(true)}
           onTrash={() => setTrashOpen(true)}
           onZen={() => setZen(true)}
-          onSettings={() => setSettingsOpen(true)}
+          onSettings={(section) => setSettingsOpen(section ?? "appearance")}
         />
         <nav className="toolbar" aria-label="Tools">
           <ReaderToolSlot />
@@ -468,9 +490,11 @@ export function Workspace({ zenRequest = 0 }: { zenRequest?: number }) {
                   </button>
                 );
               })}
+              {/* The pen colors show next to the scribble tool while it is on. */}
+              {group.includes("scribble") && tool === "scribble" && viewMode === "2d" && !textOnly && <PenColors />}
             </span>
           ))}
-          <span className="divider" />
+          {/* "Show an item here" is in the block of the link tool. */}
           {shown("add") && <button
             className="icon-button"
             data-tip="Show an item here (A). An item from a different board shows as a reference."
@@ -479,7 +503,12 @@ export function Workspace({ zenRequest = 0 }: { zenRequest?: number }) {
           >
             <Plus size={18} strokeWidth={1.75} />
           </button>}
-          {shown("color") && !textOnly && viewMode === "2d" && <ColorManager boardId={boardId} placeIds={selection.placeIds} />}
+          {shown("color") && !textOnly && viewMode === "2d" && (
+            <>
+              <span className="divider" />
+              <ColorManager boardId={boardId} placeIds={selection.placeIds} />
+            </>
+          )}
           <span className="divider" />
           {!shown("view") ? null : textOnly ? (
             <>
@@ -509,9 +538,11 @@ export function Workspace({ zenRequest = 0 }: { zenRequest?: number }) {
           )}
             <span className="divider" />
           </WhenNoPage>
-          {shown("web") && <WebButton />}
           {shown("plugins") && <PluginMenu selectedIds={pluginSelection} boardItemIds={boardItemIds} scope={{ kind: textOnly ? "page" : "board", name: titleOf(session.store, boardId) }} />}
           <WhenNoPage>{shown("selection") && viewMode === "2d" && !textOnly && <ContextBar selection={selection} />}</WhenNoPage>
+          {/* The end of the tool bar: "Save again from the web" (an open page) and "Read a web page or a PDF". */}
+          <ReaderEndSlot />
+          {shown("web") && <WebButton />}
         </nav>
         </div>
         <main className="board-area">
@@ -583,7 +614,7 @@ export function Workspace({ zenRequest = 0 }: { zenRequest?: number }) {
         />
       )}
       <WebOpener openRef={openUrlRef} jumpRef={jumpRef} browserRef={browserRef} />
-      {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen !== null && <SettingsDialog section={settingsOpen} onClose={() => setSettingsOpen(null)} />}
       {actionItemsOpen && (
         <ActionItemsDialog
           onOpen={(board, itemId) => {
@@ -593,6 +624,7 @@ export function Workspace({ zenRequest = 0 }: { zenRequest?: number }) {
           onClose={() => setActionItemsOpen(false)}
         />
       )}
+      <LinkBench />
       {trashOpen && (
         <TrashDialog
           boardId={boardId}
@@ -616,12 +648,14 @@ export function Workspace({ zenRequest = 0 }: { zenRequest?: number }) {
         <SearchDialog
           boardId={session.rootId}
           title="Link to… (search all boards)"
-          onOpen={(hit) => {
+          onOpen={(hit, query) => {
             const link = session.store.get("links", hit.recordId);
             const itemId = link?.kind === "link" ? link.to : hit.recordId;
             if (!session.store.has("items", itemId)) return;
             const body = session.store.get("texts", itemId)?.body ?? "";
-            targetSearch.resolve({ itemId, quote: hit.field === "body" ? uniqueQuote(body, hit.start, hit.end) : undefined });
+            // A hit in a text: that exact text. A hit in a saved web page or PDF: the words found there.
+            const quote = hit.field === "body" ? uniqueQuote(body, hit.start, hit.end) : hit.field === "page" && query.trim() !== "" ? query.trim() : undefined;
+            targetSearch.resolve({ itemId, quote });
             setTargetSearch(null);
           }}
           onClose={() => {
@@ -638,9 +672,45 @@ export function Workspace({ zenRequest = 0 }: { zenRequest?: number }) {
   );
 }
 
-type TopBarProps = { shown(id: string): boolean; navigation: Navigation; path: Id[]; onNavigate(index: number): void; onSearch(): void; onActionItems(): void; onTrash(): void; onZen(): void; onSettings(): void };
+type TopBarProps = { shown(id: string): boolean; pinned(id: string): boolean; zen: boolean; navigation: Navigation; path: Id[]; onNavigate(index: number): void; onSearch(): void; onActionItems(): void; onTrash(): void; onZen(): void; onSettings(section?: SettingsSection): void };
 
-function TopBar({ shown, navigation, path, onNavigate, onSearch, onActionItems, onTrash, onZen, onSettings }: TopBarProps) {
+function TopBar({ shown, pinned, zen, navigation, path, onNavigate, onSearch, onActionItems, onTrash, onZen, onSettings }: TopBarProps) {
+  const web = useWebPages();
+  const backup = useBackup();
+  // The backup menu, opened from "More" (when the backup button is not in the top bar).
+  const [backupsOpen, setBackupsOpen] = useState(false);
+  const [more, setMore] = useState<MenuRequest | null>(null);
+  // A press on ⋯ while the menu is open closes it (the menu closes on the press): the click must not open it again.
+  const moreClosed = useRef(0);
+  // The folded buttons: in the top bar if pinned (Settings › Top bar; in zen mode: the zen buttons), else in "More".
+  const folded = FOLDED_BUTTONS.filter((button) => !pinned(button.id));
+  const openMore = (element: HTMLElement) => {
+    const box = element.getBoundingClientRect();
+    const run: Record<string, () => void> = { actionItems: onActionItems, bench: toggleBench, trash: onTrash, backup: () => setBackupsOpen(true), zenOn: onZen };
+    const icons: Record<string, ReactNode> = {
+      actionItems: <ListChecks size={14} />,
+      bench: <Link2 size={14} />,
+      trash: <Trash2 size={14} />,
+      backup: <Archive size={14} />,
+      zenOn: <ZenIcon size={14} />,
+    };
+    const labels: Record<string, string> = {
+      actionItems: "Action items",
+      bench: "Link bench: show or hide",
+      trash: "Trash",
+      backup: "Backups…",
+      zenOn: "Zen mode (⌃⌘Z)",
+    };
+    setMore({
+      x: box.left,
+      y: box.bottom + 4,
+      entries: [
+        ...folded.map((button) => ({ label: labels[button.id]!, icon: icons[button.id], onSelect: run[button.id]! })),
+        { kind: "separator" as const },
+        { label: "Choose the top bar buttons…", icon: <Settings size={14} />, onSelect: () => onSettings("topBar") },
+      ],
+    });
+  };
   const session = useSession();
   const state = useSessionState();
   const runCommand = useRunCommand();
@@ -665,11 +735,15 @@ function TopBar({ shown, navigation, path, onNavigate, onSearch, onActionItems, 
       <button className="icon-button" data-tip="Forward (⌘])" disabled={!navigation.canForward} onClick={navigation.forward}>
         <ArrowRight size={16} />
       </button>)}
-      {shown("actionItems") && (
+      {pinned("actionItems") && (
       <button className="icon-button" data-tip="Action items: all open ones" onClick={onActionItems}>
         <ListChecks size={16} />
       </button>)}
-      {shown("trash") && (
+      {pinned("bench") && (
+      <button className="icon-button" data-tip="Link bench: show or hide it" onClick={toggleBench}>
+        <Link2 size={16} />
+      </button>)}
+      {pinned("trash") && (
       <button className="icon-button" data-tip="Trash: items deleted from all boards" onClick={onTrash}>
         <Trash2 size={16} />
       </button>)}
@@ -695,15 +769,21 @@ function TopBar({ shown, navigation, path, onNavigate, onSearch, onActionItems, 
       <span className={`save-status icon-button ${status.className}`} data-tip={status.tip}>
         <status.icon size={15} />
       </span>)}
-      {shown("backup") && <BackupButton />}
+      {pinned("backup") ? <BackupButton backup={backup} /> : <BackupButton backup={backup} button={false} open={backupsOpen} setOpen={setBackupsOpen} />}
+      {backup.status}
       {shown("theme") && <ThemeButton />}
       {/* Zen mode: only the buttons chosen in Settings show. Esc (or the button in the small bar) ends it. */}
-      {shown("zenOn") && (
+      {!zen && pinned("zenOn") && (
       <button className="icon-button" data-tip="Zen mode: hide the bars (⌃⌘Z · Esc ends it)" onClick={onZen}>
-        <Maximize2 size={16} />
+        <ZenIcon size={16} />
       </button>)}
+      {!zen && folded.length > 0 && (
+      <button className={`icon-button${more !== null ? " active" : ""}`} data-tip="More: action items, link bench, trash, back up, zen mode" onClick={(event) => performance.now() - moreClosed.current > 300 && openMore(event.currentTarget)}>
+        <Ellipsis size={16} />
+      </button>)}
+      {more !== null && <ContextMenu request={more} onClose={() => ((moreClosed.current = performance.now()), setMore(null))} />}
       {shown("settings") && (
-      <button className="icon-button" data-tip="Settings" onClick={onSettings}>
+      <button className="icon-button" data-tip="Settings" onClick={() => onSettings()}>
         <Settings size={16} />
       </button>)}
       <span className="divider" />
@@ -726,7 +806,11 @@ function TopBar({ shown, navigation, path, onNavigate, onSearch, onActionItems, 
                 <button
                   className={`${current ? "current" : ""}${session.store.get("items", id)?.codeName === true ? " code-name" : ""}`}
                   data-tip={current ? "Double-click to rename" : "Go to this board"}
-                  onClick={() => onNavigate(index)}
+                  onClick={() => {
+                    // An open web page or PDF closes: the board shows again (also its own board name).
+                    web?.close();
+                    onNavigate(index);
+                  }}
                   onDoubleClick={() => current && !state.readOnly && session.store.has("items", currentId) && setRenaming(true)}
                 >
                   {titleOf(session.store, id)}

@@ -207,6 +207,37 @@ export function setCardTime(context: ActionContext, placeId: Id, time: string | 
 }
 
 /** The start time of a card in minutes (for sorting), or -1 (all day: first). */
+/**
+ * The order of the cards of one day of a calendar: by start time (cards without a time first), then by the order
+ * that the user dragged them into (`rank`), then by the time the items were made.
+ */
+export function dayOrder(store: Store): (a: PlaceLink, b: PlaceLink) => number {
+  const created = (place: PlaceLink) => store.get("items", place.to)?.created ?? "";
+  return (a, b) =>
+    startMinutes(a) - startMinutes(b) ||
+    (a.rank ?? Number.MAX_SAFE_INTEGER) - (b.rank ?? Number.MAX_SAFE_INTEGER) ||
+    (created(a) < created(b) ? -1 : created(a) > created(b) ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+}
+
+/**
+ * Moves a card inside its day of a calendar: it goes before `beforeId` (null: at the end). The cards of the day get
+ * their new order (`rank`). One command.
+ */
+export function reorderInDay(context: ActionContext, placeId: Id, beforeId: Id | null): Command {
+  const place = context.store.get("links", placeId);
+  if (place?.kind !== "place" || place.outline === undefined || place.day === undefined) return { label: "Change order", ops: [] };
+  const day = (cardsByDay(context.store, context.graph, place.outline).get(place.day) ?? []).sort(dayOrder(context.store)).filter((other) => other.id !== placeId);
+  const at = beforeId === null ? day.length : Math.max(0, day.findIndex((other) => other.id === beforeId));
+  day.splice(at === -1 ? day.length : at, 0, place);
+  const ops: Op[] = [];
+  day.forEach((card, rank) => {
+    const current = context.store.get("links", card.id);
+    if (current?.kind !== "place" || current.rank === rank) return;
+    ops.push(makeOp("links", card.id, current, { ...current, rank }));
+  });
+  return { label: "Change order", ops };
+}
+
 export function startMinutes(place: PlaceLink): number {
   const match = /^(\d\d):(\d\d)/.exec(place.time ?? "");
   return match === null ? -1 : Number(match[1]) * 60 + Number(match[2]);

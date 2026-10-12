@@ -63,6 +63,33 @@ describe("speech queue", () => {
     expect(released).toContain("url-s0");
   });
 
+  it("shows loading until the sound starts, not only until the clip is made", async () => {
+    let started: (() => void) | undefined;
+    const audio = new FakeAudio();
+    const play = audio.play.bind(audio);
+    audio.play = (url, onStarted) => ((started = onStarted), play(url));
+    const loading: boolean[] = [];
+    const queue = new SpeechQueue(sentences(2), async (sentence) => sentence.speech, audio, {
+      onSentence: () => undefined,
+      onState: () => undefined,
+      onLoading: (value) => loading.push(value),
+      onEnd: () => undefined,
+      onError: () => undefined,
+    });
+    queue.start();
+    await flush();
+    // The clip is made and given to the audio, but the sound did not start yet.
+    expect(audio.played).toEqual(["s0"]);
+    expect(loading.at(-1)).toBe(true);
+    started?.();
+    expect(loading.at(-1)).toBe(false);
+    // The next clip is ready: no loading state between the sentences.
+    audio.end();
+    await flush();
+    expect(audio.played).toEqual(["s0", "s1"]);
+    expect(loading.at(-1)).toBe(false);
+  });
+
   it("a step starts at the new sentence and the old run stops", async () => {
     const audio = new FakeAudio();
     const queue = new SpeechQueue(sentences(5), async (sentence) => sentence.speech, audio, {
@@ -179,5 +206,25 @@ describe("speech replies and settings", () => {
     expect(settings.speechMode).toBe("subtitle");
     expect(settings.pluginOptions).toEqual({ voice: { voice: "x" } });
     expect(readSettings(undefined).pluginOptions).toEqual({});
+  });
+});
+
+describe("ready cursor", () => {
+  it("reports how far the audio is ready from the current sentence", async () => {
+    const audio = new FakeAudio();
+    const ready: number[] = [];
+    const queue = new SpeechQueue(sentences(3), async (sentence) => sentence.speech, audio, {
+      onSentence: () => undefined,
+      onState: () => undefined,
+      onEnd: () => undefined,
+      onError: () => undefined,
+      onReady: (end) => ready.push(end),
+    });
+    queue.start();
+    await flush();
+    expect(ready.at(-1)).toBe(3);
+    audio.end();
+    await flush();
+    expect(ready.at(-1)).toBe(3);
   });
 });

@@ -74,6 +74,14 @@ export class FakeBackend implements Backend {
   }
 
   backups: string[] = [];
+  async listBackups(): Promise<{ name: string; path: string; bytes: number; files: number }[]> {
+    return this.backups.map((path) => ({ name: path.split("/").at(-1)!, path, bytes: 0, files: 0 })).reverse();
+  }
+
+  async deleteBackup(_root: string, name: string): Promise<void> {
+    this.backups = this.backups.filter((path) => path.split("/").at(-1) !== name);
+  }
+
   async backupVault(root: string): Promise<{ path: string; bytes: number; files: number }> {
     const path = `${root}/.backup/${this.backups.length + 1}`;
     this.backups.push(path);

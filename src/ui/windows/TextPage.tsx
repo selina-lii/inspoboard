@@ -16,7 +16,9 @@ import type { TextEditorApi } from "../editor/TextEditor";
 import { useHiddenOverlay, useOverlay } from "../plugins/pluginsContext";
 import { HiddenTransformChip, TransformedChip } from "../plugins/TransformedText";
 import { ItemBody } from "./ItemBody";
-import { CommentButtons, CommentColumn, useCommentColumn } from "./CommentColumn";
+import { announceNewComment, CommentButtons, CommentColumn, smallItemCommand, useCommentColumn } from "./CommentColumn";
+import { useSmallTool, usedSmallTool, type TextAnchor } from "../app/smallTool";
+import { isPageHome } from "../../core/inside";
 import { MarksProvider, MarkTools, PageScribbleLayer } from "./marks";
 import { DuplicateWarning } from "./DuplicateWarning";
 import { ItemInfo } from "./ItemInfo";
@@ -39,6 +41,7 @@ export function TextPage({ itemId, parentId, onOpenSibling }: Props) {
   const hiddenOverlay = useHiddenOverlay(itemId);
   const item = session.store.get("items", itemId);
   const comments = useCommentColumn(itemId);
+  const smallTool = useSmallTool();
   const toolSlot = usePageToolSlot();
   // The scribbles use the whole width of the page. Their points start at the text area of the editor.
   const [pageElement, setPageElement] = useState<HTMLDivElement | null>(null);
@@ -67,6 +70,34 @@ export function TextPage({ itemId, parentId, onOpenSibling }: Props) {
     handle.addEventListener("pointerup", up);
     handle.addEventListener("pointercancel", up);
   };
+  /** The selected text of the page body, for a new small item that points to it. */
+  const selectedAnchor = (): TextAnchor | null => {
+    const view = editor.current?.view();
+    const range = view?.state.selection.main;
+    if (view == null || range === undefined || range.empty) return null;
+    // Only text that is selected now (the editor keeps its last selection also when the text is not marked any more).
+    const dom = window.getSelection();
+    if (dom === null || dom.isCollapsed || !view.dom.contains(dom.anchorNode)) return null;
+    const text = view.state.doc.sliceString(range.from, range.to).trim();
+    return text === "" ? null : { text, at: range.from + view.state.doc.sliceString(range.from, range.to).indexOf(text) };
+  };
+  /** The small-item tool is on: a click on the page (text or margin) makes the item there (SPEC 1.1). */
+  const placeSmallItem = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (smallTool === null || readOnly || event.button !== 0 || !isPageHome(session.store, session.graph, itemId)) return;
+    if ((event.target as Element).closest(".page-object, .page-resize, .text-page-head, button, textarea, input") !== null) return;
+    const bodyElement = event.currentTarget.querySelector(".text-page-body");
+    if (bodyElement === null) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const body = bodyElement.getBoundingClientRect();
+    const at: [number, number] = [event.clientX - body.right, event.clientY - body.top];
+    // The column shows the item while it is typed: it opens for typing.
+    const { command, itemId: newId } = smallItemCommand(session.context, itemId, smallTool.view, at, settings.userName, smallTool.anchor);
+    if (runCommand(command)) {
+      usedSmallTool();
+      announceNewComment(itemId, newId);
+    }
+  };
   if (item === undefined) {
     return <div className="text-page muted">This item does not exist. It is a ghost: its links stay in the graph.</div>;
   }
@@ -76,7 +107,7 @@ export function TextPage({ itemId, parentId, onOpenSibling }: Props) {
     <span className="page-tools">
       {(overlay === undefined || side) && <MarkTools onHighlightSelection={() => editor.current?.highlightSelection() ?? false} />}
       <span className="divider" />
-      <CommentButtons itemId={itemId} column={comments} />
+      <CommentButtons itemId={itemId} column={comments} selection={selectedAnchor} />
       <button className="icon-button" data-tip="Link selected text (⌘K)" data-tip-end disabled={readOnly || (overlay !== undefined && !side)} onClick={() => editor.current?.linkSelection()}>
         <Link2 size={16} />
       </button>
@@ -84,7 +115,7 @@ export function TextPage({ itemId, parentId, onOpenSibling }: Props) {
   );
   return (
     <MarksProvider itemId={itemId} pageLayer={!side}>
-    <div ref={setPageElement} className={`text-page${side ? " wide" : ""}${comments.shown ? " with-comments" : ""}`} style={{ "--page-width": `${pageWidth}px` } as CSSProperties}>
+    <div ref={setPageElement} data-page-id={itemId} onPointerDownCapture={placeSmallItem} className={`text-page${side ? " wide" : ""}${comments.shown ? " with-comments" : ""}${smallTool !== null && !readOnly ? " placing" : ""}`} style={{ "--page-width": `${pageWidth}px` } as CSSProperties}>
       {!side && pageElement !== null && <PageScribbleLayer page={pageElement} textArea={textArea} />}
       <div className="text-page-head">
         <PageNavigation itemId={itemId} parentId={parentId} onOpenSibling={onOpenSibling} />
@@ -123,7 +154,7 @@ export function TextPage({ itemId, parentId, onOpenSibling }: Props) {
         <ItemBody itemId={itemId} readOnly={readOnly} editorRef={editor} />
         <PageLinks itemId={itemId} />
         {/* The comments sit right at the edge of the text, and scroll with it. */}
-        {comments.shown && <CommentColumn itemId={itemId} />}
+        {comments.shown && <CommentColumn itemId={itemId} editorRef={editor} />}
       </div>
     </div>
     </MarksProvider>

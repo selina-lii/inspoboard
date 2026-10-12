@@ -140,11 +140,28 @@ export function encodeNotes(notes: WebNotes): string {
  */
 export function placeHighlight(text: string, highlight: WebHighlight): { start: number; end: number } | null {
   if (text.slice(highlight.start, highlight.end) === highlight.quote) return { start: highlight.start, end: highlight.end };
+  return findQuote(text, highlight.quote, highlight.start);
+}
+
+/**
+ * A quote in a page text: the place nearest to `near`. If the exact text is not there, the spaces and line ends may
+ * differ (for example after a change of how a PDF joins its lines): any run of spaces in the quote matches any
+ * run of spaces (or none) in the text.
+ */
+export function findQuote(text: string, quote: string, near = 0): { start: number; end: number } | null {
+  if (quote.trim() === "") return null;
   let best: number | null = null;
-  for (let at = text.indexOf(highlight.quote); at !== -1; at = text.indexOf(highlight.quote, at + 1)) {
-    if (best === null || Math.abs(at - highlight.start) < Math.abs(best - highlight.start)) best = at;
+  for (let at = text.indexOf(quote); at !== -1; at = text.indexOf(quote, at + 1)) {
+    if (best === null || Math.abs(at - near) < Math.abs(best - near)) best = at;
   }
-  return best === null || highlight.quote === "" ? null : { start: best, end: best + highlight.quote.length };
+  if (best !== null) return { start: best, end: best + quote.length };
+  const words = quote.trim().split(/\s+/).map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const pattern = new RegExp(words.join("\\s*"), "g");
+  let found: { start: number; end: number } | null = null;
+  for (const match of text.matchAll(pattern)) {
+    if (found === null || Math.abs(match.index - near) < Math.abs(found.start - near)) found = { start: match.index, end: match.index + match[0].length };
+  }
+  return found;
 }
 
 /** An SVG path for scribble points. */

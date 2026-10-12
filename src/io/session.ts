@@ -26,7 +26,7 @@ import { Store } from "../core/store";
 import type { ActionContext } from "../core/actions";
 import type { Id, TableName, TableRecords } from "../core/types";
 import { referenceProblems } from "../core/validate";
-import { vaultAccess, type Backend, type BackupInfo, type FileChange, type OpenedVault, type VaultAccess } from "./backend";
+import { vaultAccess, type Backend, type BackupEntry, type BackupInfo, type FileChange, type OpenedVault, type VaultAccess } from "./backend";
 import { Persister, tableOfPath, type PersistStatus } from "./persist";
 import { encodeSettings, readSettings, type Settings } from "./settings";
 
@@ -154,6 +154,16 @@ export class Session {
     }
   }
 
+  listBackups(): Promise<BackupEntry[]> {
+    return this.backend.listBackups(this.state.root);
+  }
+
+  /** Deletes one backup for good. The caller asks the user first. */
+  async deleteBackup(name: string): Promise<void> {
+    if (this.state.readOnly) throw new Error("The vault is read-only.");
+    await this.backend.deleteBackup(this.state.root, name);
+  }
+
   /** Saves all changes, then copies the vault data into `<vault>/.backup/<time>/`. */
   async backup(): Promise<BackupInfo> {
     await this.saveNow();
@@ -207,17 +217,18 @@ export class Session {
     await this.backend.writeWebBytes(this.state.root, path, bytes);
   }
 
-  /** A file dialog, then the PDF goes into the vault. Returns its key, or null if the user cancelled. */
-  async importPdf(): Promise<string | null> {
-    if (this.state.readOnly) throw new Error("The vault is read-only.");
-    const source = await this.backend.choosePdf();
-    return source === null ? null : this.backend.importPdf(this.state.root, source);
+  /** A file dialog for a PDF. Returns its path, or null if the user cancelled. */
+  choosePdf(): Promise<string | null> {
+    return this.backend.choosePdf();
   }
 
-  /** Copies a local PDF (a path from a link) into the vault, like "Open a PDF file…". Returns its key. */
-  importPdfFrom(path: string): Promise<string> {
+  /**
+   * Copies a local PDF (a path from a link) into the vault: as the copy of a link object (`itemId`), or by its hash.
+   * Returns its key.
+   */
+  importPdfFrom(path: string, itemId?: string): Promise<string> {
     if (this.state.readOnly) throw new Error("The vault is read-only.");
-    return this.backend.importPdf(this.state.root, path);
+    return this.backend.importPdf(this.state.root, path, itemId);
   }
 
   revealFile(path: string): Promise<void> {

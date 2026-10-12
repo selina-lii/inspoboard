@@ -243,6 +243,9 @@
 .tool-choice-menu button:hover, .tool-choice-menu button.active { background: var(--bg-hover); }
 .tool-choice-menu button span { flex: 1; }
 .tool-choice-menu kbd { font-size: 10px; color: var(--text-faint); font-family: var(--font-mono); }
+/* A submenu row: its list opens at its right side. */
+.tool-choice-sub { position: relative; display: flex; flex-direction: column; }
+.tool-choice-submenu { top: -5px; left: calc(100% + 4px); min-width: 180px; }
 .tool-choice-hint { font-size: 11px; color: var(--text-faint); padding: 4px 8px 2px; }
 /* The tools of an open text page in the main tool bar. */
 .page-tool-slot, .page-tools { display: contents; }
@@ -250,3 +253,10 @@
 /* A dialog or popover moves by a drag on its title (src/ui/app/movable.tsx). */
 .movable-handle { cursor: grab; user-select: none; -webkit-user-select: none; touch-action: none; }
 .movable-handle:active { cursor: grabbing; }
+
+/* The backup menu: "Back up now", and the list of backups with their sizes. */
+.backup-panel { right: 0; left: auto; width: 340px; }
+.backup-list { display: flex; flex-direction: column; gap: 2px; max-height: 320px; overflow-y: auto; }
+.backup-row { display: grid; grid-template-columns: 1fr auto auto auto; align-items: center; gap: 6px; font-size: 12px; padding: 2px 0; }
+.backup-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.backup-size { font-variant-numeric: tabular-nums; }

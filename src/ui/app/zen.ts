@@ -8,6 +8,7 @@ export const ZEN_BUTTONS: readonly ZenButton[] = [
   { id: "forward", label: "Forward" },
   { id: "actionItems", label: "Action items" },
   { id: "trash", label: "Trash" },
+  { id: "bench", label: "Link bench" },
   { id: "undo", label: "Undo" },
   { id: "redo", label: "Redo" },
   { id: "save", label: "Save status" },
@@ -30,4 +31,16 @@ export const ZEN_BUTTONS: readonly ZenButton[] = [
   { id: "web", label: "Web pages" },
   { id: "plugins", label: "Plugins" },
   { id: "selection", label: "Selection tools" },
+];
+
+/**
+ * Top bar buttons that are folded into the "More" menu (⋯). Each one can show in the top bar always (setting
+ * "topBarButtons"). Zen mode shows them in its bar if they are in "zenButtons".
+ */
+export const FOLDED_BUTTONS: readonly ZenButton[] = [
+  { id: "actionItems", label: "Action items" },
+  { id: "bench", label: "Link bench" },
+  { id: "trash", label: "Trash" },
+  { id: "backup", label: "Back up" },
+  { id: "zenOn", label: "Zen mode" },
 ];

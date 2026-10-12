@@ -54,6 +54,8 @@ export function useMarks(): MarksValue | null {
 }
 
 export const INK: Record<NoteColor, string> = { yellow: "#e6b800", green: "#28a745", pink: "#ff375f", blue: "#0a84ff" };
+/** The names of the colors (tooltips). */
+const COLOR_NAMES: Record<NoteColor, string> = { yellow: "Yellow", green: "Green", pink: "Pink", blue: "Blue" };
 
 export function MarksProvider({ itemId, pageLayer = false, children }: { itemId: Id; pageLayer?: boolean; children: ReactNode }) {
   const session = useSession();
@@ -218,7 +220,7 @@ export function MarkTools({ compact = false, onHighlightSelection }: { compact?:
       {marks.mode !== "none" && marks.mode !== "erase" && marks.mode !== "lasso" && (
         <span className="mark-colors">
           {NOTE_COLORS.map((name) => (
-            <button key={name} className={`mark-color${marks.color === name ? " active" : ""}`} style={{ background: INK[name] }} aria-label={name} onClick={() => marks.setColor(name)} />
+            <button key={name} className={`mark-color${marks.color === name ? " active" : ""}`} style={{ background: INK[name] }} data-tip={COLOR_NAMES[name]} aria-label={COLOR_NAMES[name]} onClick={() => marks.setColor(name)} />
           ))}
         </span>
       )}

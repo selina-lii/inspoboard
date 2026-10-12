@@ -177,7 +177,14 @@ export function prepareSentences(text: string, sentences: readonly Sentence[], s
       }
     }
   }
-  return result.sort((a, b) => a.start - b.start);
+  // Math letters and other styled forms (𝑃, 𝑿, ², ｆ) become their plain letters: a voice reads 𝑃 as "P", not as a
+  // code like "letter 1D443" (PDFs keep formulas as such letters).
+  return result.map((sentence) => ({ ...sentence, speech: plainLetters(sentence.speech) })).sort((a, b) => a.start - b.start);
+}
+
+/** The plain forms of styled letters and digits (Unicode NFKC), and a space for invisible math operators. */
+export function plainLetters(text: string): string {
+  return text.normalize("NFKC").replace(/[\u2061-\u2064]/g, " ");
 }
 
 /** The part of letters that are Latin (A–Z): about 1 for English, about 0 for Chinese. */

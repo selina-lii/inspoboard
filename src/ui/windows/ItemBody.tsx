@@ -1,11 +1,11 @@
 // The body of an open item, in an editor window or on the text page.
 // - No plugin result: the editor. While it is read aloud: the text with the spoken sentence marked.
 // - A plugin result (for example a translation): in place of the text, or side by side (the text at the left).
-//   Side by side, the two sides are paragraph-aligned: each result paragraph starts level with its paragraph in the text
+//   Side by side, the two sides are paragraph-aligned by content (length, kind, numbers): each result paragraph starts level with its paragraph in the text
 //   (space goes after the shorter one), and both sides scroll as one. The text at the left stays editable.
 // - Read aloud with a result: the side that is read marks the sentence. The other side marks the matching line.
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MutableRefObject, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from "react";
 import type { Id } from "../../core/types";
 import { TRANSFORM_SPLIT_RANGE } from "../../io/settings";
 import { useSession, useSessionState } from "../app/sessionContext";
@@ -15,7 +15,7 @@ import { lineAt, lineStart, matchingLine } from "../plugins/reading";
 import { useSpeech, useSpokenSentence, type Spoken } from "../plugins/speech";
 import { LineMarkedText, SpokenText } from "../plugins/SpeechBar";
 import { TransformedText } from "../plugins/TransformedText";
-import { pairBlocks, paragraphBlocks } from "../plugins/paragraphs";
+import { alignBlocks, paragraphBlocks } from "../plugins/paragraphs";
 import { linesHeight, setSpacers, spacerField, type Spacer } from "../editor/spacers";
 
 type Props = {
@@ -89,7 +89,7 @@ function Counterpart({ text, spoken }: { text: string; spoken: Spoken }) {
     <LineMarkedText
       text={text}
       line={line}
-      onLine={(clicked) => speech?.seekToOffset(lineStart(spoken.text, matchingLine(clicked, lines, spokenLines)))}
+      onLine={(clicked) => speech?.clickSeek(lineStart(spoken.text, matchingLine(clicked, lines, spokenLines)))}
     />
   );
 }
@@ -115,8 +115,14 @@ function AlignedSplit({ title, original, result, editor, editorRef }: AlignedPro
   const recent = useRef<string[]>([]);
   const leftBlocks = paragraphBlocks(original);
   const rightBlocks = paragraphBlocks(result);
-  const latest = useRef({ leftBlocks, rightBlocks, original });
-  latest.current = { leftBlocks, rightBlocks, original };
+  // The rows by content: each result paragraph goes level with the paragraph that it translates.
+  const rows = useMemo(
+    () => alignBlocks(leftBlocks.map((block) => original.slice(block.from, block.to)), rightBlocks.map((block) => result.slice(block.from, block.to))),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [original, result],
+  );
+  const latest = useRef({ leftBlocks, rightBlocks, original, rows });
+  latest.current = { leftBlocks, rightBlocks, original, rows };
 
   const align = useCallback(() => {
     cancelAnimationFrame(frame.current);
@@ -124,7 +130,7 @@ function AlignedSplit({ title, original, result, editor, editorRef }: AlignedPro
       const view = editorRef.current?.view();
       const column = right.current;
       if (view === null || view === undefined || column === null) return;
-      const { leftBlocks: lefts, rightBlocks: rights, original: text } = latest.current;
+      const { leftBlocks: lefts, rightBlocks: rights, original: text, rows } = latest.current;
       if (view.state.doc.length !== text.length) return;
       const doc = view.state.doc;
       // Left heights: the lines of each block (without the spaces). Right heights: each block element without its padding.
@@ -134,7 +140,6 @@ function AlignedSplit({ title, original, result, editor, editorRef }: AlignedPro
       const rightHeights = elements.map((element) => element.getBoundingClientRect().height);
       const spacers: Spacer[] = [];
       const pads = rights.map(() => 0);
-      const rows = pairBlocks(lefts.length, rights.length);
       // The last row gets no space: nothing after it must start level. A space at the very end would only change
       // the scroll height, and the last paragraph would jump.
       for (const row of rows.slice(0, -1)) {

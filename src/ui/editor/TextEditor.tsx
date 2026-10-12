@@ -4,6 +4,8 @@
 // - If the store text changes from outside (a reload from disk), the editor shows the new text.
 
 import { defaultKeymap, history, indentWithTab, redo, undo, undoDepth } from "@codemirror/commands";
+import { sendToBench } from "../app/LinkBench";
+import { reportPassage } from "../app/passages";
 import { markdown } from "@codemirror/lang-markdown";
 import { Annotation, EditorState } from "@codemirror/state";
 import { EditorView, keymap, placeholder } from "@codemirror/view";
@@ -18,6 +20,7 @@ import { withScheme } from "../web/savedPages";
 import { ContextMenu, type MenuRequest } from "../app/ContextMenu";
 import { useJump, useWorkspaceActions, type WorkspaceActions } from "../app/workspaceActions";
 import { useSpeech } from "../plugins/speech";
+import { formattingKeys } from "./formatting";
 import { editorTheme, flashField, linkTargetAt, livePreview, setFlash, webUrlAt } from "./livePreview";
 import { useWebPages } from "../web/WebPages";
 import { Download, Globe, MessageSquarePlus, RefreshCw } from "lucide-react";
@@ -96,11 +99,12 @@ export function TextEditor({ itemId, readOnly, apiRef, autoFocus, onLayout }: Pr
         label: "Comment",
         icon: <MessageSquarePlus size={14} />,
         onSelect: () => {
-          const { command, itemId: commentId } = commentCommand(session.context, session.rootId, itemId, userName, label);
+          const { command, itemId: commentId } = commentCommand(session.context, session.rootId, itemId, userName, label, range.from);
           if (runCommand(command)) announceNewComment(itemId, commentId);
         },
       },
     );
+    entries.push({ label: "Send to link bench", icon: <Link2 size={14} />, onSelect: () => sendToBench({ itemId, quote: label, range: { from: range.from, to: range.to } }) });
     if (!label.includes("\n") && !label.includes("]")) {
       entries.push({
         label: "Add web link…",
@@ -154,6 +158,8 @@ export function TextEditor({ itemId, readOnly, apiRef, autoFocus, onLayout }: Pr
             { key: "Mod-z", run: () => (session.history.undo(), true), preventDefault: true },
             { key: "Mod-Shift-z", run: () => (session.history.redo(), true), preventDefault: true },
             { key: "Mod-y", run: () => (session.history.redo(), true), preventDefault: true },
+            // ⌘B bold, ⌘I italic, ⌘U underline (formatting.ts).
+            ...(readOnly ? [] : formattingKeys),
             ...defaultKeymap,
             indentWithTab,
           ]),
@@ -183,7 +189,12 @@ export function TextEditor({ itemId, readOnly, apiRef, autoFocus, onLayout }: Pr
           placeholder("Write here…"),
           EditorView.updateListener.of((update) => {
             if (update.geometryChanged || update.heightChanged || update.docChanged) layoutListener.current?.();
-            if (update.selectionSet) rememberSelection(itemId, update.state.selection.main.from, update.state.selection.main.to);
+            if (update.selectionSet) {
+              const { from, to } = update.state.selection.main;
+              rememberSelection(itemId, from, to);
+              // The link bench can take the selected passage (with its place in the text).
+              if (update.view.hasFocus) reportPassage(from < to ? { itemId, quote: update.state.sliceDoc(from, to), range: { from, to } } : null, itemId);
+            }
             // Edits move the highlights. Save their new ranges.
             if (update.docChanged && update.state.field(markField).ranges.length > 0) {
               marks.current?.moveHighlights(update.state.field(markField).ranges, update.state.doc.toString());
@@ -234,7 +245,7 @@ export function TextEditor({ itemId, readOnly, apiRef, autoFocus, onLayout }: Pr
               const reading = speech.current?.state;
               if (reading != null && reading.sourceId === itemId && reading.side === "original" && !reading.preparing && event.button === 0 && !(event.metaKey || event.ctrlKey)) {
                 const position = editorView.posAtCoords({ x: event.clientX, y: event.clientY });
-                if (position !== null) speech.current?.seekToOffset(position);
+                if (position !== null) speech.current?.clickSeek(position);
                 return false;
               }
               if (!(event.metaKey || event.ctrlKey) || event.button !== 0) return false;

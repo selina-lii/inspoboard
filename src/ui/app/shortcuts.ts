@@ -1,6 +1,7 @@
 // Global keyboard shortcuts. Keys typed in a text field or the editor go to that field.
 
 import { useEffect } from "react";
+import { armSmallByKey, smallSurfaceOpen } from "./smallTool";
 import { isTextTarget } from "./dom";
 import { isComposing, shortcutKey } from "./keys";
 import { TOOLS, type ToolId } from "../tools/registry";
@@ -70,6 +71,8 @@ export function useShortcuts({ setTool, openSearch, addItem, collapseAll, back, 
         addItem();
         return;
       }
+      // A page or a saved web page / PDF is open: the keys of the small kinds choose that kind there (SPEC 1.1).
+      if (smallSurfaceOpen() && armSmallByKey(key)) return;
       const tool = TOOLS.find((candidate) => candidate.shortcut === key);
       // The key of the active tool turns it off, as a second click on its button does.
       if (tool !== undefined) setTool((current) => (current === tool.id ? "select" : tool.id));

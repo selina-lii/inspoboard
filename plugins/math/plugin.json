@@ -1,0 +1,7 @@
+{
+  "protocol": 1,
+  "title": "Math to words",
+  "version": "0.1.0",
+  "exec": "inspoboard-math",
+  "capabilities": ["math-text"]
+}

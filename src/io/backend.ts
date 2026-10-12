@@ -30,6 +30,8 @@ export type FileChange = { path: string; content: string | null; unreadable: boo
 export type SnapshotInfo = { id: string; message: string; time: number };
 /** A backup folder: its full path, its size in bytes, and its number of files. */
 export type BackupInfo = { path: string; bytes: number; files: number };
+/** A backup in the list of the backup menu: its folder name too. */
+export type BackupEntry = BackupInfo & { name: string };
 
 export type Backend = {
   openVault(path: string): Promise<OpenedVault>;
@@ -41,6 +43,10 @@ export type Backend = {
   listSnapshots(root: string, limit: number): Promise<SnapshotInfo[]>;
   /** Copies the vault data into `<vault>/.backup/<time>/`. */
   backupVault(root: string): Promise<BackupInfo>;
+  /** The backups in `<vault>/.backup/`, the newest first. */
+  listBackups(root: string): Promise<BackupEntry[]>;
+  /** Deletes one backup folder of `<vault>/.backup/` for good. */
+  deleteBackup(root: string, name: string): Promise<void>;
   /** The vault to open at startup. Release builds: none. Development builds: the test vault. */
   startupVault(): Promise<string | null>;
   chooseFolder(title?: string): Promise<string | null>;
@@ -61,7 +67,8 @@ export type Backend = {
   /** A file dialog for one PDF. */
   choosePdf(): Promise<string | null>;
   /** Copies a PDF into the vault (web/<key>.pdf). Returns its key. */
-  importPdf(root: string, source: string): Promise<string>;
+  /** Copies a local PDF into web/: as the copy of a link object (`key`: its ID), or by its hash. Returns the key. */
+  importPdf(root: string, source: string, key?: string): Promise<string>;
   /** Shows a local file in Finder (Explorer on Windows). Rejects if there is no file there. */
   revealFile(path: string): Promise<void>;
   /** Opens a web address (http or https) in the default web browser. */
@@ -92,6 +99,8 @@ export const tauriBackend: Backend = {
   snapshot: (root, message) => invoke<string | null>("snapshot", { root, message }),
   listSnapshots: (root, limit) => invoke<SnapshotInfo[]>("list_snapshots", { root, limit }),
   backupVault: (root) => invoke<BackupInfo>("backup_vault", { root }),
+  listBackups: (root) => invoke<BackupEntry[]>("list_backups", { root }),
+  deleteBackup: (root, name) => invoke<void>("delete_backup", { root, name }),
   revealFile: (path) => invoke<void>("reveal_file", { path }),
   openInBrowser: (url) => invoke<void>("open_in_browser", { url }),
   menuTexts: () => invoke<{ id: string; text: string }[]>("menu_texts"),
@@ -119,7 +128,7 @@ export const tauriBackend: Backend = {
     const result = await open({ multiple: false, title: words("Open a PDF"), filters: [{ name: "PDF", extensions: ["pdf"] }] });
     return typeof result === "string" ? result : null;
   },
-  importPdf: (root, source) => invoke<string>("import_pdf", { root, source }),
+  importPdf: (root, source, key) => invoke<string>("import_pdf", { root, source, key: key ?? null }),
   exportText: async (defaultName, content) => {
     const path = await save({ title: words("Save as"), defaultPath: defaultName, filters: [{ name: "Markdown", extensions: ["md"] }] });
     if (path === null) return null;

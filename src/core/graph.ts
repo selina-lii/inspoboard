@@ -3,7 +3,7 @@
 
 import { findInlineRefs, type InlineRef } from "./refs";
 import type { Store } from "./store";
-import type { Id, ItemRecord, OutlineRecord, PlaceLink, RelationLink } from "./types";
+import type { Id, InsideLink, ItemRecord, OutlineRecord, PlaceLink, RelationLink } from "./types";
 
 export type InlineRefEdge = InlineRef & { from: Id };
 
@@ -20,6 +20,10 @@ type IndexData = {
   homes: Map<Id, PlaceLink>;
   /** Item ID -> the objects attached to it (comments, links), oldest first. */
   attached: Map<Id, ItemRecord[]>;
+  /** Home ID -> the inside links of the small items in it. */
+  insideOf: Map<Id, InsideLink[]>;
+  /** Small item ID -> its inside link (the first by ID, if an older or broken vault has more). */
+  insideHome: Map<Id, InsideLink>;
 };
 
 export class GraphIndex {
@@ -114,6 +118,16 @@ export class GraphIndex {
     return this.get().attached.get(itemId) ?? [];
   }
 
+  /** The small items inside a page or a link object (SPEC 1.1), in the order of the links table. */
+  insideOf(homeId: Id): readonly InsideLink[] {
+    return this.get().insideOf.get(homeId) ?? [];
+  }
+
+  /** The inside link of a small item: where it is inside. Undefined if it is not inside an item. */
+  insideHomeOf(itemId: Id): InsideLink | undefined {
+    return this.get().insideHome.get(itemId);
+  }
+
   /** A ghost is an ID that a link or an inline reference uses, but that has no record. */
   isGhost(id: Id): boolean {
     return !this.store.has("items", id) && !this.store.has("stamps", id);
@@ -132,12 +146,16 @@ export class GraphIndex {
     return ghosts;
   }
 
-  /** Items that are on no board. The root item is not an orphan. Nor is an attached object (a reply to a comment). */
+  /**
+   * Items that are on no board. The root item is not an orphan. Nor is an attached object (a reply to a comment), nor a
+   * small item inside an item (it goes to the trash with its home).
+   */
   unplacedItems(rootId: Id): Id[] {
     const result: Id[] = [];
     for (const item of this.store.all("items")) {
       const attached = item.on !== undefined && this.store.has("items", item.on);
-      if (item.id !== rootId && !attached && this.parentsOf(item.id).length === 0) result.push(item.id);
+      const inside = this.store.has("items", this.insideHomeOf(item.id)?.from ?? "");
+      if (item.id !== rootId && !attached && !inside && this.parentsOf(item.id).length === 0) result.push(item.id);
     }
     return result;
   }
@@ -159,6 +177,8 @@ export class GraphIndex {
       membersOfOutline: new Map(),
       homes: new Map(),
       attached: new Map(),
+      insideOf: new Map(),
+      insideHome: new Map(),
     };
     for (const item of this.store.all("items")) if (item.on !== undefined) pushTo(data.attached, item.on, item);
     for (const list of data.attached.values()) list.sort((a, b) => (a.created < b.created ? -1 : a.created > b.created ? 1 : a.id < b.id ? -1 : 1));
@@ -176,6 +196,10 @@ export class GraphIndex {
           const home = data.homes.get(link.to);
           if (home === undefined || link.id < home.id) data.homes.set(link.to, link);
         }
+      } else if (link.kind === "inside") {
+        pushTo(data.insideOf, link.from, link);
+        const known = data.insideHome.get(link.to);
+        if (known === undefined || link.id < known.id) data.insideHome.set(link.to, link);
       } else {
         pushTo(data.relationsFrom, link.from, link);
         pushTo(data.relationsTo, link.to, link);

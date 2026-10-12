@@ -1,5 +1,5 @@
 // A link between two ends, from anywhere: an item, or a passage in an item (its text, or its saved web page or PDF).
-// The link bench (src/ui/app/LinkBench.tsx) makes these links. See docs/SPEC.md section 7.10.
+// The link bench (src/ui/app/LinkBench.tsx) makes these links. See docs/SPEC.md section 7.11.
 // - The first end is the source, the second end is the target (`quote`: the target passage).
 // - A source passage in a note or page text becomes "[passage](link:<id>)" in that text, in the same command.
 //   If the text changed and the passage is not there one time exactly, the passage has more than one line or a

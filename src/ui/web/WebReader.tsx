@@ -10,19 +10,24 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { COLUMN, firstTop, pageParagraphs, TranslationColumn, useColumnWidth, usePageTranslation } from "./pageTranslation";
 import { pageCounterpart } from "../plugins/sentencePairs";
 import { nanoid } from "nanoid";
-import { useSessionState } from "../app/sessionContext";
+import { useSession, useSessionState } from "../app/sessionContext";
+import { reportPassage } from "../app/passages";
+import { ReaderLinks, useLinkMarks } from "./linkMarks";
 import { offerSelection } from "../plugins/SelectionTranslate";
 import { usePlugins } from "../plugins/pluginsContext";
-import { useSpeech, useSpokenSentence, WEB_SOURCE } from "../plugins/speech";
+import { useSpeech, useSpokenSentence, WEB_SOURCE, type ReadMode } from "../plugins/speech";
 import { useWebPages, type HtmlPage } from "./WebPages";
-import { isWebUrl, placeHighlight, WIDTH_RANGE, type NoteColor, type WebNotes } from "./savedPages";
-import { boxesOf, clampZoom, FindBar, marginOf, readerKey, ReaderSheet, ReaderTools, usePageFind, useReaderKeys, useReaderNotes, type Box, type Mark, type PageFind, type ReaderMode, type SheetApi } from "./readerShared";
+import { findQuote, isWebUrl, placeHighlight, WIDTH_RANGE, type NoteColor, type WebNotes } from "./savedPages";
+import { armSmallByKey, type TextAnchor } from "../app/smallTool";
+import { isTextTarget } from "../app/dom";
+import { boxesOf, clampZoom, readyMarkOf, FindBar, marginOf, readerKey, ReaderSheet, ReaderTools, usePageFind, useReaderKeys, useReaderNotes, type Box, type Mark, type PageFind, type ReaderMode, type SheetApi } from "./readerShared";
 import { indexText, offsetAt, rangeOf, type TextIndex } from "./webText";
 
 /** Styles inside the page: no scroll (the canvas scrolls), and cursors for the tools. */
 const FRAME_STYLE = `
 html, body { overflow: hidden !important; }
-html.inspoboard-read body { cursor: text; }
+html.inspoboard-invert:not(.inspoboard-invert-images) img, html.inspoboard-invert:not(.inspoboard-invert-images) video, html.inspoboard-invert:not(.inspoboard-invert-images) canvas, html.inspoboard-invert:not(.inspoboard-invert-images) [style*="background-image"] { filter: invert(1) hue-rotate(180deg); }
+html.inspoboard-select body { cursor: text; }
 `;
 /** A page taller than this is cut (a page that grows with its frame). */
 const MAX_HEIGHT = 200000;
@@ -31,6 +36,7 @@ type Props = { page: HtmlPage; onClose(): void; onSaveAgain(): void };
 
 export function WebReader({ page, onClose, onSaveAgain }: Props) {
   const { readOnly } = useSessionState();
+  const session = useSession();
   const speech = useSpeech();
   const plugins = usePlugins();
   const web = useWebPages();
@@ -38,7 +44,7 @@ export function WebReader({ page, onClose, onSaveAgain }: Props) {
   const sheet = useRef<SheetApi | null>(null);
   const index = useRef<TextIndex | null>(null);
   const [loaded, setLoaded] = useState(0);
-  const [mode, setModeNow] = useState<ReaderMode>("read");
+  const [mode, setModeNow] = useState<ReaderMode>("select");
   // The comment and note tools make one item per click, as the board tools. A double-click keeps them on.
   const [modeSticky, setModeSticky] = useState(false);
   const setMode = useCallback((next: ReaderMode, keep = false) => {
@@ -46,10 +52,12 @@ export function WebReader({ page, onClose, onSaveAgain }: Props) {
     setModeSticky(keep);
   }, []);
   const [color, setColor] = useState<NoteColor>("yellow");
-  const { notes, notesRef, loaded: notesLoaded, change: changeNotes, step, problem } = useReaderNotes(page.key);
+  const { notes, notesRef, loaded: notesLoaded, change: changeNotes, step, problem } = useReaderNotes(page.key, page.notesFrom);
+  /** The selected text of the page (its place in the page text), for a new small item that points to it. */
+  const selectedText = useRef<TextAnchor | null>(null);
   const [title, setTitle] = useState("");
   const [height, setHeight] = useState(2000);
-  const [textSides, setTextSides] = useState<{ left: number; right: number } | null>(null);
+  const [, setTextSides] = useState<{ left: number; right: number } | null>(null);
   const [zoom, setZoom] = useState<number | null>(null);
   const sourceId = WEB_SOURCE + page.key;
   const spoken = useSpokenSentence(sourceId);
@@ -66,14 +74,20 @@ export function WebReader({ page, onClose, onSaveAgain }: Props) {
   // The page width: saved in the notes; the first time, from the size of the reader.
   const [defaultWidth] = useState(() => Math.round(Math.min(1100, Math.max(720, window.innerWidth - 2 * 260 - 80))));
   const width = notes.width ?? defaultWidth;
-  const margin = marginOf(notes.margin, width, textSides);
+  const margin = marginOf(width);
   // Each change keeps the page width, so that the page flows the same next time.
   const change = useCallback((next: WebNotes) => changeNotes({ ...next, width: next.width ?? width }), [changeNotes, width]);
 
-  const fitZoom = useCallback(() => clampZoom(Math.min(1, ((sheet.current?.viewWidth() ?? window.innerWidth) - 48) / (width + 2 * margin + columnWidth))), [width, margin, columnWidth]);
+  const fitZoom = useCallback(() => clampZoom(Math.min(1, ((sheet.current?.viewWidth() ?? window.innerWidth) - 48) / (width + columnWidth))), [width, columnWidth]);
+  /** Fits the page (and the translation column) to the width, and scrolls to the page (the margins are at its sides). */
+  const [fitCount, setFitCount] = useState(0);
+  const fitPage = useCallback(() => {
+    setZoom(fitZoom());
+    setFitCount((count) => count + 1);
+  }, [fitZoom]);
   useEffect(() => {
-    if (zoom === null && notesLoaded) setZoom(fitZoom());
-  }, [zoom, notesLoaded, fitZoom]);
+    if (zoom === null && notesLoaded) fitPage();
+  }, [zoom, notesLoaded, fitPage]);
   const shownZoom = zoom ?? 1;
 
   // The newest values for the frame event handlers (they are added one time per load).
@@ -82,11 +96,14 @@ export function WebReader({ page, onClose, onSaveAgain }: Props) {
 
   // Find in page (⌘F): the hook needs the mark boxes (below), the keys need it here.
   const findRef = useRef<PageFind | null>(null);
+  /** ⌘-click on a linked passage: goes along its link (set below, when the page text is known). */
+  const followRef = useRef<(offset: number) => boolean>(() => false);
   const keyActions = {
+    mode,
     find: () => findRef.current?.show(),
     step,
     zoomBy: (factor: number) => setZoom((value) => clampZoom((value ?? 1) * factor)),
-    fit: () => setZoom(fitZoom()),
+    fit: () => fitPage(),
     setMode,
   };
   useReaderKeys(keyActions);
@@ -95,7 +112,7 @@ export function WebReader({ page, onClose, onSaveAgain }: Props) {
 
   const [notice, setNotice] = useState<string | null>(null);
   const readFrom = useCallback(
-    (offset: number) => {
+    (offset: number, until?: number) => {
       const { speech: reader, speaker: plugin } = live.current;
       const text = index.current?.text ?? "";
       if (reader === null || plugin === null) {
@@ -107,20 +124,29 @@ export function WebReader({ page, onClose, onSaveAgain }: Props) {
         return;
       }
       setNotice(null);
-      if (reader.state?.sourceId === sourceId && !reader.state.preparing) reader.seekToOffset(offset);
-      else void reader.readText(plugin.name, sourceId, text, offset);
+      if (until === undefined && reader.state?.sourceId === sourceId && !reader.state.preparing && reader.state.until === undefined) reader.seekToOffset(offset);
+      else void reader.readText(plugin.name, sourceId, text, offset, index.current?.formulas, until);
     },
     [sourceId],
   );
 
-  /** Read from the selected text, or from the top. The "Read aloud" button of the plugin menu uses it. */
-  const readFromSelection = useCallback(() => {
-    const doc = frame.current?.contentDocument;
-    const selection = doc?.getSelection();
+  /** The selected text of the page: its range in the page text, or null. */
+  const selectedRange = useCallback((): { start: number; end: number } | null => {
+    const selection = frame.current?.contentDocument?.getSelection();
     const range = selection != null && selection.rangeCount > 0 && !selection.isCollapsed ? selection.getRangeAt(0) : null;
-    const offset = range === null || index.current === null ? 0 : (offsetAt(index.current, range.startContainer, range.startOffset) ?? 0);
-    readFrom(offset);
-  }, [readFrom]);
+    if (range === null || index.current === null) return null;
+    const start = offsetAt(index.current, range.startContainer, range.startOffset);
+    const end = offsetAt(index.current, range.endContainer, range.endOffset);
+    return start === null || end === null || end <= start ? null : { start, end };
+  }, []);
+  /** "Read aloud" in the plugin menu: from the start, the selected text only, or from the selected text on. */
+  const read = useCallback(
+    (mode: ReadMode) => {
+      const range = mode === "start" ? null : selectedRange();
+      readFrom(range?.start ?? 0, mode === "selection" ? range?.end : undefined);
+    },
+    [readFrom, selectedRange],
+  );
   useEffect(() => {
     if (web === null) return;
     const textToRead = () => {
@@ -131,12 +157,12 @@ export function WebReader({ page, onClose, onSaveAgain }: Props) {
       const offset = range === null || index.current === null ? null : offsetAt(index.current, range.startContainer, range.startOffset);
       return { text: offset === null ? text : text.slice(offset), fromSelection: offset !== null };
     };
-    const api = { readFromSelection, textToRead, translate: (plugin: string) => void translation.run(plugin), hideTranslation: translation.hide, translated: translation.shown };
+    const api = { read, hasSelection: () => selectedRange() !== null, textToRead, translate: (plugin: string) => void translation.run(plugin), hideTranslation: translation.hide, translated: translation.shown };
     web.reader.current = api;
     return () => {
       if (web.reader.current === api) web.reader.current = null;
     };
-  }, [web, readFromSelection, translation]);
+  }, [web, read, selectedRange, translation]);
 
   // The frame can finish loading before React adds its load handler: set up when it is complete.
   useEffect(() => {
@@ -158,7 +184,7 @@ export function WebReader({ page, onClose, onSaveAgain }: Props) {
   useEffect(() => {
     if (hadColumn.current === columnWidth > 0) return;
     hadColumn.current = columnWidth > 0;
-    setZoom(fitZoom());
+    fitPage();
   }, [columnWidth, fitZoom]);
 
   const autoRead = useRef(page.autoRead === true);
@@ -230,23 +256,49 @@ export function WebReader({ page, onClose, onSaveAgain }: Props) {
             return;
           }
         }
-        if (live.current.mode !== "read") return;
+        // ⌘-click on a linked passage (dotted line): go to the other end of its link.
+        if (event.metaKey || event.ctrlKey) {
+          const at = doc.caretRangeFromPoint(event.clientX, event.clientY);
+          const offset = at === null || index.current === null ? null : offsetAt(index.current, at.startContainer, at.startOffset);
+          if (offset !== null && followRef.current(offset)) {
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+          }
+        }
+        if (live.current.mode !== "select") return;
         const selection = doc.getSelection();
         if (selection !== null && !selection.isCollapsed) return;
         const caret = doc.caretRangeFromPoint(event.clientX, event.clientY);
         const offset = caret === null || index.current === null ? null : offsetAt(index.current, caret.startContainer, caret.startOffset);
-        if (offset !== null) readFrom(offset);
+        // Only while it reads this page (Read aloud started it): the click moves the reading there. Else a click does not read.
+        const reader = live.current.speech;
+        if (offset !== null && reader?.state?.sourceId === sourceId && !reader.state.preparing) reader.clickSeek(offset);
       },
       true,
     );
 
     doc.addEventListener("mouseup", () => {
       const selection = doc.getSelection();
+      const pageItem: string | undefined = page.itemId;
       if (selection === null || selection.isCollapsed || selection.rangeCount === 0 || index.current === null) {
+        selectedText.current = null;
         offerSelection("", 0, 0);
+        if (pageItem !== undefined) reportPassage(null, pageItem);
         return;
       }
       const range = selection.getRangeAt(0);
+      // The link bench can take this passage (its page text, as the marks find it again).
+      if (pageItem !== undefined) {
+        const start = offsetAt(index.current, range.startContainer, range.startOffset);
+        const end = offsetAt(index.current, range.endContainer, range.endOffset);
+        if (start !== null && end !== null && end > start) reportPassage({ itemId: pageItem, quote: index.current.text.slice(start, end) });
+      }
+      {
+        const start = offsetAt(index.current, range.startContainer, range.startOffset);
+        const end = offsetAt(index.current, range.endContainer, range.endOffset);
+        selectedText.current = start !== null && end !== null && end > start ? { text: index.current.text.slice(start, end), at: start } : null;
+      }
       if (live.current.mode === "highlight" && !live.current.readOnly) {
         const start = offsetAt(index.current, range.startContainer, range.startOffset);
         const end = offsetAt(index.current, range.endContainer, range.endOffset);
@@ -267,7 +319,14 @@ export function WebReader({ page, onClose, onSaveAgain }: Props) {
 
     doc.addEventListener("keydown", (event) => {
       if (live.current.speech?.handleKey(event) === true) return;
-      readerKey(event, keyActionsRef.current);
+      if (readerKey(event, keyActionsRef.current)) return;
+      // The keys of the small kinds (N, M, W, I, F, Q) also work while the page frame has the focus.
+      if (!event.metaKey && !event.ctrlKey && !event.altKey && !isTextTarget(event.target) && armSmallByKey(event.key.toLowerCase())) {
+        event.preventDefault();
+        return;
+      }
+      // A key in the page frame does not reach the app window: Esc with no use in the reader goes there (zen mode).
+      if (event.key === "Escape" && !event.defaultPrevented) window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     });
     // The frame does not scroll: its wheel scrolls the canvas. Ctrl + wheel and pinch zoom the canvas.
     const toApp = (x: number, y: number) => {
@@ -305,8 +364,17 @@ export function WebReader({ page, onClose, onSaveAgain }: Props) {
   useEffect(() => {
     const root = frame.current?.contentDocument?.documentElement;
     if (root == null) return;
-    for (const name of ["read", "select", "highlight", "pen", "erase", "comment", "note"]) root.classList.toggle(`inspoboard-${name}`, name === mode);
+    for (const name of ["select", "highlight", "pen", "erase", "comment", "note"]) root.classList.toggle(`inspoboard-${name}`, name === mode);
   }, [mode, loaded]);
+
+  // Inverted colors: the frame is inverted; its pictures are inverted again, so they keep their colors (unless the
+  // setting "Invert pictures too" is on).
+  const { settings } = useSessionState();
+  useEffect(() => {
+    const root = frame.current?.contentDocument?.documentElement;
+    root?.classList.toggle("inspoboard-invert", settings.readerInvert);
+    root?.classList.toggle("inspoboard-invert-images", settings.readerInvertImages);
+  }, [settings.readerInvert, settings.readerInvertImages, loaded]);
 
   // Marks: boxes of the highlights and of the spoken sentence, in page units (the frame does not scroll).
   const boxes = useCallback((start: number, end: number): Box[] => {
@@ -336,36 +404,43 @@ export function WebReader({ page, onClose, onSaveAgain }: Props) {
     if (loaded && page.find !== undefined && page.find !== "") find.show(page.find);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, page]);
-  const marks = [...highlightMarks, ...(spokenMark === null ? [] : [spokenMark]), ...find.marks];
+  const linkMarks = useLinkMarks(page.itemId, pageText, boxes, `${loaded}:${height}`);
+  followRef.current = linkMarks.follow;
+  // The "ready" cursor of read aloud (where the ready audio ends), if the setting shows it.
+  const readyMark = readyMarkOf(useSpeech()?.state, sourceId, settings.speechShowReady, boxes);
+  const marks = [...highlightMarks, ...linkMarks.marks, ...(spokenMark === null ? [] : [spokenMark]), ...(readyMark === null ? [] : [readyMark]), ...find.marks];
 
   return (
     <div className="web-reader">
       <ReaderTools
+        selection={() => selectedText.current}
         title={title}
         url={page.url}
         mode={mode}
         color={color}
         readOnly={readOnly}
-        canRead={speaker !== null}
         zoom={shownZoom}
-        margin={notes.margin}
-        shownMargin={margin}
         onMode={setMode}
         sticky={modeSticky}
         onColor={setColor}
         onClose={onClose}
         onStep={step}
-        onReadFromStart={() => readFrom(0)}
         onZoom={(value) => setZoom(clampZoom(value))}
-        onFit={() => setZoom(fitZoom())}
-        onMargin={(value) => change({ ...notesRef.current, margin: value })}
+        onFit={() => fitPage()}
         onSaveAgain={web?.canSave === true ? onSaveAgain : undefined}
+        extra={<ReaderLinks itemId={page.itemId} />}
       />
       <FindBar find={find} />
       {problem !== null && <div className="plugin-error web-reader-problem">{problem}</div>}
       {notice !== null && <div className="plugin-error web-reader-problem">{notice}</div>}
       {notesLoaded && (
         <ReaderSheet
+          homeId={page.itemId}
+          fitKey={fitCount}
+        anchorBox={(quote, at) => {
+            const found = index.current === null ? null : findQuote(index.current.text, quote, at ?? 0);
+            return found === null ? null : (boxes(found.start, found.end).at(-1) ?? null);
+          }}
           pageWidth={Math.min(WIDTH_RANGE.max, width)}
           pageHeight={height}
           zoom={shownZoom}
@@ -409,7 +484,7 @@ export function WebReader({ page, onClose, onSaveAgain }: Props) {
         >
           <iframe
             ref={frame}
-            className="web-reader-frame"
+            className={`web-reader-frame${settings.readerInvert ? " inverted" : ""}`}
             title={title}
             sandbox="allow-same-origin allow-scripts"
             srcDoc={page.html}

@@ -3,6 +3,9 @@
 //! - A backup holds the same files as a time machine snapshot: vault.json and the data folders.
 //! - Each backup is a plain folder. To restore, the user copies its files back into the vault.
 //! - The folder name is the UTC time, "YYYY-MM-DD_HH-MM-SS". A second backup in the same second gets "-2", "-3", ...
+//!   The migration scripts put their backup here too ("<time>_before-migration").
+//! - The backup menu lists the backups (name, size) and deletes one: for good (to free disk space), after the user
+//!   confirms. Only a folder directly in .backup can be deleted.
 
 use std::fs;
 use std::path::Path;
@@ -45,6 +48,73 @@ pub fn backup(root: &Path) -> Result<BackupInfo, String> {
     }
     fs::create_dir_all(&target).map_err(|error| describe(&target, error))?;
     Ok(BackupInfo { path: target.to_string_lossy().to_string(), bytes, files: files.len() })
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct BackupEntry {
+    /// The folder name (for example "2026-10-11_12-00-00").
+    pub name: String,
+    pub path: String,
+    pub bytes: u64,
+    pub files: usize,
+}
+
+/// The backups of the vault, the newest first (by name: the names start with the time).
+pub fn list(root: &Path) -> Result<Vec<BackupEntry>, String> {
+    let base = root.join(BACKUP_FOLDER);
+    let entries = match fs::read_dir(&base) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(describe(&base, error)),
+    };
+    let mut list = Vec::new();
+    for entry in entries.flatten() {
+        let Ok(kind) = entry.file_type() else { continue };
+        if !kind.is_dir() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') {
+            continue;
+        }
+        let (bytes, files) = size_of(&entry.path());
+        list.push(BackupEntry { path: entry.path().to_string_lossy().to_string(), name, bytes, files });
+    }
+    list.sort_by(|a, b| b.name.cmp(&a.name));
+    Ok(list)
+}
+
+/// The size and the number of files of a folder (links are not followed).
+fn size_of(folder: &Path) -> (u64, usize) {
+    let mut bytes = 0;
+    let mut files = 0;
+    let mut stack = vec![folder.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&current) else { continue };
+        for entry in entries.flatten() {
+            let Ok(meta) = entry.path().symlink_metadata() else { continue };
+            if meta.is_dir() {
+                stack.push(entry.path());
+            } else {
+                bytes += meta.len();
+                files += 1;
+            }
+        }
+    }
+    (bytes, files)
+}
+
+/// Deletes one backup folder for good. `name` must be a folder directly in .backup (no path, not a link).
+pub fn delete(root: &Path, name: &str) -> Result<(), String> {
+    if name.is_empty() || name.starts_with('.') || name.contains(['/', '\\']) {
+        return Err(format!("\"{name}\" is not a backup."));
+    }
+    let target = root.join(BACKUP_FOLDER).join(name);
+    let meta = target.symlink_metadata().map_err(|error| describe(&target, error))?;
+    if !meta.is_dir() {
+        return Err(format!("\"{name}\" is not a backup folder."));
+    }
+    fs::remove_dir_all(&target).map_err(|error| describe(&target, error))
 }
 
 /// "YYYY-MM-DD_HH-MM-SS" (UTC) of seconds since 1970.
@@ -93,5 +163,25 @@ mod tests {
         let second = backup(folder.path()).unwrap();
         assert_ne!(first.path, second.path);
         assert_eq!(second.files, 2);
+    }
+
+    #[test]
+    fn lists_and_deletes_backups_only() {
+        let folder = tempfile::tempdir().unwrap();
+        write_atomic(folder.path(), "vault.json", "{}\n").unwrap();
+        write_atomic(folder.path(), "items/a1b2c3d4e5f6.md", "text").unwrap();
+        let made = backup(folder.path()).unwrap();
+        let listed = list(folder.path()).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].path, made.path);
+        assert_eq!((listed[0].bytes, listed[0].files), (7, 2));
+        // Names with a path, or outside .backup, are refused. The vault stays.
+        assert!(delete(folder.path(), "../items").is_err());
+        assert!(delete(folder.path(), "..").is_err());
+        assert!(delete(folder.path(), "").is_err());
+        assert!(delete(folder.path(), "no-such-backup").is_err());
+        delete(folder.path(), &listed[0].name).unwrap();
+        assert!(list(folder.path()).unwrap().is_empty());
+        assert!(folder.path().join("items/a1b2c3d4e5f6.md").is_file());
     }
 }

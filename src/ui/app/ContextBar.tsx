@@ -145,8 +145,8 @@ export function ContextBar({ selection }: { selection: BoardSelection }) {
   const place = placeId === undefined ? undefined : session.store.get("links", placeId);
   return layout(
     <>
-      {/* Small objects (comment, link, action item, flashcard) keep their type: no note/page/board button. */}
-      {place !== undefined && place.kind === "place" && session.store.has("items", recordId) && !OBJECT_VIEWS.includes(place.view) && (
+      {/* Small objects (comment, link, action item, flashcard) and groups keep their type: no note/page/board button. */}
+      {place !== undefined && place.kind === "place" && session.store.has("items", recordId) && !OBJECT_VIEWS.includes(place.view) && place.view !== "group" && (
         <StateButton placeId={place.id} itemId={recordId} view={place.view} disabled={readOnly} />
       )}
       {session.store.has("items", recordId) && (

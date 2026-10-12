@@ -9,7 +9,7 @@ export type MenuEntry =
   /** A row of color swatches. */
   | { kind: "colors"; colors: string[]; onSelect(color: string): void }
   /** One line with a label and small choice buttons (for example the quotation marks of a quote card). */
-  | { kind: "choices"; label: string; choices: { id: string; text: string; tip: string }[]; current: string; onSelect(id: string): void };
+  | { kind: "choices"; label: string; choices: { id: string; text: string; tip: string; color?: string }[]; current: string; onSelect(id: string): void };
 
 export type MenuRequest = { x: number; y: number; entries: MenuEntry[] };
 
@@ -60,6 +60,7 @@ export function ContextMenu({ request, onClose }: { request: MenuRequest; onClos
                 <button
                   key={choice.id}
                   className={choice.id === entry.current ? "active" : undefined}
+                  style={choice.color === undefined ? undefined : { color: choice.color }}
                   data-tip={choice.tip}
                   aria-pressed={choice.id === entry.current}
                   onClick={() => {

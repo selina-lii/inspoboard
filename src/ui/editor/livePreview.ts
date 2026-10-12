@@ -72,6 +72,17 @@ function buildDecorations(view: EditorView): DecorationSet {
         }
       },
     });
+    // Underline: <u>text</u> (Markdown has no underline of its own). The tags hide on lines without the cursor.
+    const text = state.sliceDoc(from, to);
+    for (const match of text.matchAll(/<u>([^<\n]+?)<\/u>/g)) {
+      const start = from + match.index;
+      const end = start + match[0].length;
+      ranges.push(Decoration.mark({ class: "cm-md-underline" }).range(start + 3, end - 4));
+      if (!active.has(state.doc.lineAt(start).number)) {
+        ranges.push(hide.range(start, start + 3));
+        ranges.push(hide.range(end - 4, end));
+      }
+    }
   }
   return Decoration.set(ranges, true);
 }
@@ -154,6 +165,7 @@ export const editorTheme = EditorView.theme(
     ".cm-md-strong": { fontWeight: "700" },
     ".cm-md-em": { fontStyle: "italic" },
     ".cm-md-strike": { textDecoration: "line-through" },
+    ".cm-md-underline": { textDecoration: "underline" },
     ".cm-md-code": { fontFamily: "var(--font-mono)", fontSize: "0.9em", backgroundColor: "var(--bg-raised)", borderRadius: "3px" },
     ".cm-md-link": { color: "var(--accent)", cursor: "pointer" },
     ".cm-flash": { backgroundColor: "rgba(255, 214, 10, 0.45)", color: "var(--text)", borderRadius: "2px" },

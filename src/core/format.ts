@@ -13,7 +13,13 @@ import { Store } from "./store";
 import { schemaErrors } from "./validate";
 import type { AnyRecord, Id, TableName } from "./types";
 
-export const FORMAT_VERSION = 1;
+/**
+ * The vault format. The app reads this version and all older ones.
+ * - 1: the first format.
+ * - 2: small items inside pages and saved web pages are `inside` links; each link object has its own web copy
+ *   (SPEC 1.1). scripts/migrations/inside-links.mjs changes a vault from 1 to 2. A format-1 vault opens as it is.
+ */
+export const FORMAT_VERSION = 2;
 
 export const VAULT_FILE = "vault.json";
 export const APP_FOLDER = ".inspoboard";
@@ -44,7 +50,7 @@ export const TABLE_FILES: Record<LineTable, string> = {
 /** Field order in saved lines. Known fields come first. Other fields follow in alphabetical order. */
 const FIELD_ORDER: Record<LineTable, readonly string[]> = {
   items: ["id", "name", "codeName", "created", "modified", "date", "board", "list", "background", "backgroundWidth", "backgroundCenter", "backgroundFixed", "url", "author", "on", "quote", "resolved", "pageAt", "trashed", "trashedFrom"],
-  links: ["id", "kind", "from", "to", "view", "x", "y", "w", "h", "expanded", "color", "ref", "outline", "parent", "rank", "day", "until", "time", "p3", "label", "group", "start", "end", "quote", "fromQuote", "marks"],
+  links: ["id", "kind", "from", "to", "view", "x", "y", "w", "h", "expanded", "color", "ref", "outline", "parent", "rank", "day", "until", "time", "p3", "label", "group", "start", "end", "quote", "at", "fromQuote", "marks", "shape", "shapePath", "filled"],
   stamps: ["id", "alt", "w", "h", "path"],
   outlines: ["id", "type", "name", "board", "x", "y", "list", "direction", "start", "end"],
 };

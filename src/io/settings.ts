@@ -24,6 +24,14 @@ export type Settings = {
   subtitleFloating: boolean;
   /** The subtitle also shows the translation of the sentence (or the original, when the translation is read). */
   subtitleBoth: boolean;
+  /** Web pages and PDFs show with inverted colors (light text on a dark page). Separate from the app theme. */
+  readerInvert: boolean;
+  /** Inverted colors also invert the pictures of a web page (off: pictures keep their colors). PDF pictures always invert. */
+  readerInvertImages: boolean;
+  /** Read-aloud lock: a click on the text does not move the reading. */
+  speechLock: boolean;
+  /** Read aloud shows a cursor at the end of the audio that is ready ahead (the "ready" cursor). */
+  speechShowReady: boolean;
   /** The width of the translation column at the right of a web page or PDF (page units). The user drags its edge. */
   translationWidth: number;
   /**
@@ -54,6 +62,10 @@ export type Settings = {
   userName: string;
   /** Zen mode: the IDs of the buttons that show (see src/ui/app/zen.ts). Unknown IDs are ignored. */
   zenButtons: string[];
+  /** The buttons of the "More" menu (⋯) that show in the top bar always (see FOLDED_BUTTONS in src/ui/app/zen.ts). */
+  topBarButtons: string[];
+  /** The ink of new board scribbles ("#rrggbb"), or null for the theme ink (black or white). */
+  scribbleColor: string | null;
   /** The width of the text on a text page (px). The user drags an edge of the text, or types it in Settings. */
   pageWidth: number;
   /** The width of the comment column at the side of a text page (px). The user drags its edge. */
@@ -127,6 +139,10 @@ export const DEFAULT_SETTINGS: Settings = {
   speechMode: "highlight",
   subtitleFloating: true,
   subtitleBoth: false,
+  readerInvert: false,
+  readerInvertImages: false,
+  speechLock: false,
+  speechShowReady: false,
   speechAhead: "window",
   translationWidth: 660,
   speechSkip: NO_SKIP,
@@ -140,6 +156,8 @@ export const DEFAULT_SETTINGS: Settings = {
   userName: "",
   backupAlertMB: 1024,
   zenButtons: ["back", "undo", "redo", "select", "scribble", "eraser", "text"],
+  topBarButtons: [],
+  scribbleColor: null,
   commentWidth: 250,
   pageWidth: 760,
   pluginOptions: {},
@@ -169,6 +187,10 @@ export function readSettings(text: string | undefined): Settings {
   if (typeof record.subtitleFloating === "boolean") settings.subtitleFloating = record.subtitleFloating;
   if (record.speechAhead === "window" || record.speechAhead === "end" || record.speechAhead === "all") settings.speechAhead = record.speechAhead;
   if (typeof record.subtitleBoth === "boolean") settings.subtitleBoth = record.subtitleBoth;
+  if (typeof record.readerInvert === "boolean") settings.readerInvert = record.readerInvert;
+  if (typeof record.readerInvertImages === "boolean") settings.readerInvertImages = record.readerInvertImages;
+  if (typeof record.speechLock === "boolean") settings.speechLock = record.speechLock;
+  if (typeof record.speechShowReady === "boolean") settings.speechShowReady = record.speechShowReady;
   if (isNumberIn(record.translationWidth, TRANSLATION_WIDTH_RANGE.min, TRANSLATION_WIDTH_RANGE.max)) settings.translationWidth = record.translationWidth;
   settings.speechSkip = readSkip(record.speechSkip);
   settings.translateSkip = readSkip(record.translateSkip);
@@ -183,6 +205,8 @@ export function readSettings(text: string | undefined): Settings {
   if (isNumberIn(record.commentWidth, COMMENT_WIDTH_RANGE.min, COMMENT_WIDTH_RANGE.max)) settings.commentWidth = record.commentWidth;
   if (isNumberIn(record.pageWidth, PAGE_WIDTH_RANGE.min, PAGE_WIDTH_RANGE.max)) settings.pageWidth = Math.round(record.pageWidth);
   if (Array.isArray(record.zenButtons)) settings.zenButtons = [...new Set(record.zenButtons.filter((id): id is string => typeof id === "string"))];
+  if (typeof record.scribbleColor === "string" && /^#[0-9a-f]{6}$/i.test(record.scribbleColor)) settings.scribbleColor = record.scribbleColor;
+  if (Array.isArray(record.topBarButtons)) settings.topBarButtons = [...new Set(record.topBarButtons.filter((id): id is string => typeof id === "string"))];
   settings.pluginOptions = readPluginOptions(record.pluginOptions);
   if (typeof record.defaultBackgroundFixed === "boolean") settings.defaultBackgroundFixed = record.defaultBackgroundFixed;
   if (isBackground(record.defaultBackground)) settings.defaultBackground = record.defaultBackground;

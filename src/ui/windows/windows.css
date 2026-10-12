@@ -208,3 +208,23 @@ span.text-page-title { white-space: normal; overflow-wrap: anywhere; }
 .scribble-layer .scribble-selection { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1; stroke-dasharray: 4 3; pointer-events: none; }
 .scribble-layer.lasso .scribble-selection { pointer-events: all; cursor: move; }
 .scribble-layer .scribble-lasso { fill: rgba(138, 146, 242, 0.08); stroke: var(--accent); stroke-width: 1.2; stroke-dasharray: 5 4; }
+
+/* The small-item tool is on: a click on the page (text or margin) makes the item there. */
+.text-page.placing, .text-page.placing .cm-content, .text-page.placing .cm-line { cursor: crosshair; }
+/* Faint dashed curves from small items to the text that they point to. Stronger while the item is hovered. */
+.anchor-curves { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; z-index: 2; }
+.anchor-curves path { fill: none; stroke: var(--text-muted); stroke-opacity: 0.35; stroke-width: 1; stroke-dasharray: 4 4; }
+.anchor-curves circle { fill: var(--text-muted); fill-opacity: 0.4; }
+.anchor-curves g.hot path { stroke: var(--accent); stroke-opacity: 0.9; stroke-width: 1.5; }
+.anchor-curves g.hot circle { fill: var(--accent); fill-opacity: 0.9; }
+/* Small items of other kinds in a page: a note card with the color of the kind (or of the item). */
+.page-note { border-left: 3px solid var(--small-color, var(--note-border)); }
+.page-small-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%; }
+.page-small.kind-todo { --small-color: #f4ff3a; }
+.page-small.kind-quote .page-small-quote { font-style: italic; }
+.page-small.kind-quote .page-small-quote::before { content: "“"; }
+.page-small.kind-quote .page-small-quote::after { content: "”"; }
+.page-small.kind-weblink { --small-color: var(--link, #4a90e2); }
+/* The unlink button (stop pointing to text): it shows while the small item is hovered. */
+.page-object .unpoint-button { opacity: 0; }
+.page-object:hover .unpoint-button, .page-object .unpoint-button:focus-visible { opacity: 1; }

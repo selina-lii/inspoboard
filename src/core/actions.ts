@@ -44,7 +44,7 @@ export function nameOrCode(context: ActionContext, name: string | undefined): { 
 }
 
 /** Sets the name fields of an item record: a code name has `codeName: true`. */
-function withName(item: ItemRecord, named: { name: string; codeName: boolean }): ItemRecord {
+export function withName(item: ItemRecord, named: { name: string; codeName: boolean }): ItemRecord {
   const after: ItemRecord = { ...item, name: named.name };
   if (named.codeName) after.codeName = true;
   else delete after.codeName;
@@ -64,10 +64,11 @@ export const DEFAULT_SIZE: Record<ViewStyle, { w: number; h: number }> = {
   flashcard: { w: 200, h: 160 },
   // A slim card: 320 wide, as high as its text (the height is a minimum).
   quote: { w: 320, h: 72 },
+  group: { w: 480, h: 320 },
 };
 
 /** Views whose items have no name by default: the text (or the front of a flashcard) is enough. */
-const UNNAMED_VIEWS: readonly ViewStyle[] = ["note", "comment", "weblink", "todo", "flashcard", "quote"];
+export const UNNAMED_VIEWS: readonly ViewStyle[] = ["note", "comment", "weblink", "todo", "flashcard", "quote", "group"];
 
 /** The card color of an unimportant note (gray). A note without a color is yellow. */
 export const NOTE_GRAY = "#a1a1a6";
@@ -144,6 +145,7 @@ export const VIEW_LABELS: Record<ViewStyle, string> = {
   todo: "action item",
   flashcard: "flashcard",
   quote: "quote",
+  group: "group",
 };
 
 /** The marks of a quote card without its own: CJK text (Han, kana, Hangul) gets 「 」, other text ‘ ’. */
@@ -158,6 +160,17 @@ export function setQuoteMarks(context: ActionContext, placeId: Id, marks: QuoteM
   if (before.marks === marks) return emptyCommand("Change quotation marks");
   const after: PlaceLink = { ...before, marks };
   return { label: "Change quotation marks", ops: [makeOp("links", placeId, before, after)] };
+}
+
+/** A group card: filled with its color, or only its outline. */
+export function setGroupFilled(context: ActionContext, placeId: Id, filled: boolean): Command {
+  const before = context.store.get("links", placeId);
+  if (before === undefined || before.kind !== "place") throw new Error(`Link "${placeId}" is not a place link.`);
+  if ((before.filled === true) === filled) return emptyCommand("Change group look");
+  const after: PlaceLink = { ...before };
+  if (filled) after.filled = true;
+  else delete after.filled;
+  return { label: "Change group look", ops: [makeOp("links", placeId, before, after)] };
 }
 
 /** Sets the web address of a link object. */
@@ -244,6 +257,9 @@ export function completeItems(context: ActionContext, itemIds: readonly Id[]): C
   for (const itemId of new Set(itemIds)) {
     const places = context.graph.parentsOf(itemId);
     ops.push(...places.map((place) => makeOp("links", place.id, place, null)), ...outlineCleanupOps(context, places));
+    // A small item inside a page: its inside link goes too.
+    const inside = context.graph.insideHomeOf(itemId);
+    if (inside !== undefined) ops.push(makeOp("links", inside.id, inside, null));
     ops.push(...deleteItem(context, itemId).ops);
   }
   return { label: itemIds.length > 1 ? `Done (${itemIds.length})` : "Done", ops };
@@ -288,7 +304,7 @@ export function placeRecord(
 /** Creates a stamp and places it on a board. */
 export function createStampOnBoard(
   context: ActionContext,
-  input: { boardId: Id; x: number; y: number; w: number; h: number; path: string; alt?: string },
+  input: { boardId: Id; x: number; y: number; w: number; h: number; path: string; alt?: string; color?: string | null },
 ): { command: Command; stampId: Id; placeId: Id } {
   const stampId = context.newId();
   const placeId = context.newId();
@@ -304,6 +320,8 @@ export function createStampOnBoard(
     h: input.h,
     view: "text",
   };
+  // The ink color of the scribble (none: the theme ink).
+  if (input.color != null) place.color = input.color;
   const command: Command = {
     label: "Create scribble",
     ops: [makeOp("stamps", stampId, null, stamp), makeOp("links", placeId, null, place)],

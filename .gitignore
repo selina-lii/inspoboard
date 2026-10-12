@@ -5,6 +5,8 @@ src-tauri/target/
 .inspoboard/
 # Plugins: built programs and language packs are large. Never commit them.
 plugins/*/target/
+# The math plugin build downloads the official Node program here.
+plugins/*/.cache/
 data/plugins/
 data/.preview/
 # PDF.js data files: copied from node_modules by scripts/copy_pdfjs.mjs.

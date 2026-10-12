@@ -67,6 +67,8 @@ pub fn run() {
             commands::snapshot,
             commands::list_snapshots,
             commands::backup_vault,
+            commands::list_backups,
+            commands::delete_backup,
             commands::reveal_file,
             commands::open_in_browser,
             commands::save_image_bytes,

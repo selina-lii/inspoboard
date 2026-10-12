@@ -7,7 +7,8 @@
 //   goes to .inspoboard/trash, as for each delete).
 
 import { makeOp, type Command, type Op } from "./commands";
-import { deleteItem, placeRecord, type ActionContext } from "./actions";
+import { deleteItem, placeRecord, threadOf, type ActionContext } from "./actions";
+import { insideEntries } from "./inside";
 import type { GraphIndex } from "./graph";
 import type { Store } from "./store";
 import type { Id, ItemRecord, PlaceLink, TrashedFrom } from "./types";
@@ -38,6 +39,8 @@ export function withTrashMarks(context: ActionContext, rootId: Id, command: Comm
     // A new item, or an item that the command deletes: no trash fields.
     if (before === undefined || itemAfter.get(itemId) === null) continue;
     if (itemId === rootId || isAttached(context.store, before)) continue;
+    // A small item inside a page (now, or after the command): it is not on a board, and not in the trash.
+    if (insideAfter(context, command.ops, itemId)) continue;
     const cardsBefore = context.graph.parentsOf(itemId);
     const cardsAfter = placesAfter(cardsBefore, command.ops, itemId);
     const current = itemAfter.get(itemId) ?? before;
@@ -75,7 +78,20 @@ function placesAfter(before: readonly PlaceLink[], ops: readonly Op[], itemId: I
   return [...cards.values()];
 }
 
-/** An attached object (a reply, a comment on a page) is never on a board itself. It is not in the trash. */
+/** True if the item is inside an item after the ops (an inside link to it stays or is added). */
+function insideAfter(context: ActionContext, ops: readonly Op[], itemId: Id): boolean {
+  let inside = context.graph.insideHomeOf(itemId)?.id ?? null;
+  for (const op of ops) {
+    if (op.table !== "links") continue;
+    const old = op.before as { kind?: string; to?: Id } | null;
+    const next = op.after as { kind?: string; to?: Id } | null;
+    if (old?.kind === "inside" && old.to === itemId && inside === op.id) inside = null;
+    if (next?.kind === "inside" && next.to === itemId) inside = op.id;
+  }
+  return inside !== null;
+}
+
+/** An attached object (a reply, a comment on a card) is never on a board itself. It is not in the trash. */
 function isAttached(store: Store, item: ItemRecord): boolean {
   return item.on !== undefined && store.has("items", item.on);
 }
@@ -121,7 +137,20 @@ export function deleteForever(context: ActionContext, itemId: Id): Command {
   for (const link of graph.childrenOf(itemId)) linkIds.add(link.id);
   for (const link of graph.relationsFrom(itemId)) linkIds.add(link.id);
   for (const link of graph.relationsTo(itemId)) linkIds.add(link.id);
+  // The small items inside it go with it (with their replies), and their cards (old entries) and links.
+  const gone = new Set<Id>();
+  for (const entry of insideEntries(context.store, graph, itemId)) {
+    if (entry.link !== null) linkIds.add(entry.link.id);
+    for (const id of threadOf(context, entry.item.id)) {
+      if (id === itemId) continue;
+      gone.add(id);
+      for (const link of graph.parentsOf(id)) linkIds.add(link.id);
+      for (const link of graph.relationsFrom(id)) linkIds.add(link.id);
+      for (const link of graph.relationsTo(id)) linkIds.add(link.id);
+    }
+  }
   const ops: Op[] = [...linkIds].map((linkId) => makeOp("links", linkId, context.store.get("links", linkId)!, null));
+  for (const id of gone) ops.push(...deleteItem(context, id).ops);
   ops.push(...deleteItem(context, itemId).ops);
   return { label: "Delete forever", ops };
 }

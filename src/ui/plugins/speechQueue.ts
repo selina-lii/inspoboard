@@ -11,8 +11,8 @@ import type { Sentence } from "../../io/plugins";
 
 /** The part of an audio element that the queue uses. Tests give a fake. */
 export type AudioOutput = {
-  /** Plays the URL from its start. Resolves when the clip ends. Rejects on an error. */
-  play(url: string): Promise<void>;
+  /** Plays the URL from its start. Calls "started" when the sound starts. Resolves when the clip ends. Rejects on an error. */
+  play(url: string, started?: () => void): Promise<void>;
   pause(): void;
   resume(): void;
   stop(): void;
@@ -29,6 +29,8 @@ export type QueueEvents = {
   onError(error: string): void;
   /** Mode "all": the clips that are ready before it plays (null: it plays now). */
   onPrepare?(progress: { done: number; total: number } | null): void;
+  /** The audio is ready from the current sentence up to this sentence index (not included): the "ready" cursor. */
+  onReady?(end: number): void;
 };
 
 export type SpeechAhead = "window" | "end" | "all";
@@ -147,12 +149,20 @@ export class SpeechQueue {
         if (epoch !== this.epoch) return;
         this.inFlight -= 1;
         this.ready.add(index);
+        this.reportReady();
         this.wake();
         this.fill();
       };
       clip.then(settle, settle);
     }
     return clip;
+  }
+
+  /** Tells how far the audio is ready without a gap, from the current sentence. */
+  private reportReady(): void {
+    let end = this.index;
+    while (end < this.sentences.length && this.ready.has(end)) end += 1;
+    this.events.onReady?.(end);
   }
 
   /** The end (exclusive) of the clips to get ready ahead of the current sentence. */
@@ -196,16 +206,22 @@ export class SpeechQueue {
       const current = this.clipAt(index);
       this.fill();
       this.events.onSentence(index);
+      this.reportReady();
       try {
-        this.events.onLoading?.(true);
+        // "Loading" until the sound starts (not only until the clip is made): the first start of the audio can take time.
+        const waiting = !this.ready.has(index);
+        this.events.onLoading?.(waiting);
         const url = await current;
-        this.events.onLoading?.(false);
         // A pause while the clip was made, or between two clips: the next clip waits for "resume".
         while (this.paused && run === this.run) await new Promise<void>((resolve) => this.resumers.push(resolve));
         if (run !== this.run) return;
         this.clipPlaying = true;
+        const started = () => {
+          if (run === this.run) this.events.onLoading?.(false);
+        };
         try {
-          await this.audio.play(url);
+          await this.audio.play(url, started);
+          started();
         } finally {
           this.clipPlaying = false;
         }

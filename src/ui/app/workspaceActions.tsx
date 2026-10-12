@@ -22,13 +22,16 @@ export type WorkspaceActions = {
   searchTextLinkTarget(): void;
   /** Ask the user for some text values (a small dialog). Resolves with the values, or null if cancelled. */
   askFields(request: FieldsRequest): Promise<Record<string, string> | null>;
-  /** Downloads a web address (if it is not saved yet) and opens it locally in the web page reader. `read`: then read it aloud. */
-  openUrl(url: string, read?: boolean, find?: string): void;
+  /**
+   * Opens the copy of a link object in the web page reader (downloads it if it has none). `itemId`: the link object
+   * (without it: the first link object of the address, or a new one). `read`: then read it aloud.
+   */
+  openUrl(url: string, read?: boolean, find?: string, itemId?: Id): void;
   /**
    * A click on a link: a web address opens in the web browser (nothing is downloaded); a saved page with notes opens
    * its saved copy. A local file opens in the app (PDF) or in Finder.
    */
-  jumpTo(url: string): void;
+  jumpTo(url: string, itemId?: Id): void;
   /** Opens a web address in the web browser (also a page with notes). */
   openInBrowser(url: string): void;
   /** The display name of a record. */

@@ -64,12 +64,12 @@ describe("trash", () => {
   it("delete forever removes the item and its links, and undo brings them back", () => {
     const context = loadTestContext();
     run(context, removeFromBoard(context, ["p1a1a1a1a1a1"]));
-    const links = context.store.all("links").length;
+    const links = [...context.store.all("links")].length;
     run(context, deleteForever(context, TOOL_RESEARCH));
     expect(context.store.has("items", TOOL_RESEARCH)).toBe(false);
     expect(context.graph.relationsFrom(TOOL_RESEARCH).length + context.graph.relationsTo(TOOL_RESEARCH).length + context.graph.childrenOf(TOOL_RESEARCH).length).toBe(0);
     context.history.undo();
     expect(context.store.has("items", TOOL_RESEARCH)).toBe(true);
-    expect(context.store.all("links").length).toBe(links);
+    expect([...context.store.all("links")].length).toBe(links);
   });
 });

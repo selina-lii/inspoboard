@@ -6,6 +6,8 @@
 // - If `p3` is missing, the position comes from the 2D layout, centered on the board. The depth (z) is spread
 //   in a fixed pseudo-random way from the place ID, so that many cards fill a volume, not a plane.
 //   Cards in an outline or a calendar stay in the plane: their order is their meaning.
+// - Explode (`seed` > 0): a different spread for the cards with no `p3`. Also x and y move a little. View state only:
+//   cards that the user placed (with `p3`) do not move.
 
 import type { GraphIndex } from "../../core/graph";
 import type { Store } from "../../core/store";
@@ -14,6 +16,8 @@ import { snippetOf } from "../board/boardModel";
 import { boardGroupType, cardsByDay, groupTitle, isCalendar } from "../../core/groups";
 import { outlineRows } from "../../core/outline";
 import { t } from "../i18n/i18n";
+import { membersOf, shapeOutline } from "../../core/groupShapes";
+import { insideEntries, isLegacyInside } from "../../core/inside";
 
 /** 2D board units for one 3D unit. */
 export const UNITS_PER_3D = 100;
@@ -23,6 +27,8 @@ export const CLUSTER_SCALE = 0.25;
 export const SATELLITE_ORBIT = 0.45;
 /** Depth of the spread of cards with no `p3`, relative to the larger side of their 2D area. */
 export const DEPTH_SPREAD = 0.6;
+/** Explode: the largest move in x and y, relative to the depth of the spread. */
+export const EXPLODE_PLANE = 0.35;
 
 export type GalaxyPointKind = "item" | "stamp" | "ghost" | "group";
 
@@ -61,7 +67,19 @@ export type GalaxyPoint = {
   tree: TreeRow[];
   /** Calendar group: the number of days that have cards. The calendar is larger with more days. */
   days: number;
+  /** A group card (a loose area of the board): its area in 3D. Null for other points. */
+  area: GalaxyArea | null;
 };
+
+/**
+ * The area of a group card. `outline`: in 3D units, relative to the point (y up). The cards in the group spread in
+ * depth (explode), so the area is a volume from `depth[0]` to `depth[1]` (z, relative to the point) around them.
+ * With no cards (or all in one plane), it is a flat shape.
+ */
+export type GalaxyArea = { outline: [number, number][]; filled: boolean; color: string | null; depth: [number, number] };
+
+/** The space in front of and behind the cards of a group, in 3D units. */
+const AREA_DEPTH_PAD = 0.35;
 
 export type GalaxyLine = {
   key: string;
@@ -85,22 +103,45 @@ export function boardToWorld(model: GalaxyModel, x: number, y: number): Point3 {
   return [(x - model.center.x) / UNITS_PER_3D, -(y - model.center.y) / UNITS_PER_3D, 0];
 }
 
-export function buildGalaxyModel(store: Store, graph: GraphIndex, boardId: Id): GalaxyModel {
+export function buildGalaxyModel(store: Store, graph: GraphIndex, boardId: Id, seed = 0): GalaxyModel {
   const points: GalaxyPoint[] = [];
   const lines: GalaxyLine[] = [];
   /** Record ID -> the first point that shows it. Lines use it. */
   const pointOfRecord = new Map<Id, GalaxyPoint>();
 
-  const top = graph.childrenOf(boardId);
+  // The cards of old page comments and notes are not on the board (they are inside their page: satellites below).
+  const top = graph.childrenOf(boardId).filter((place) => {
+    const item = store.get("items", place.to);
+    return item === undefined || !isLegacyInside(store, graph, item);
+  });
   const topCenter = centroid(top);
   const inGroup = new Set(graph.outlinesOn(boardId).flatMap((group) => graph.membersOf(group.id).map((place) => place.id)));
   const depth = DEPTH_SPREAD * largerSide(top);
   for (const place of top) {
     const local = localPosition(place, topCenter);
-    if (place.p3 === undefined && !inGroup.has(place.id)) local[2] = (unitHash(place.id) - 0.5) * depth;
+    // A group card (a loose area) stays in the plane of the board, like the cards of an outline.
+    if (place.p3 === undefined && !inGroup.has(place.id) && place.view !== "group") {
+      const key = seed === 0 ? place.id : `${seed}:${place.id}`;
+      local[2] = (unitHash(key) - 0.5) * depth;
+      if (seed !== 0) {
+        local[0] += (unitHash(`${key}:x`) - 0.5) * depth * EXPLODE_PLANE;
+        local[1] += (unitHash(`${key}:y`) - 0.5) * depth * EXPLODE_PLANE;
+      }
+    }
     const point = makePoint(store, graph, place, 1, local, null);
     points.push(point);
     if (!pointOfRecord.has(place.to)) pointOfRecord.set(place.to, point);
+  }
+
+  // A group card: its volume holds the depth of its cards (the cards whose middle is in its shape on the 2D board).
+  const boxes = top.map((place, index) => ({ key: place.id, box: { x: place.x, y: place.y, w: place.w, h: place.h }, group: place.view === "group", point: points[index]! }));
+  for (const { key, box, point } of boxes) {
+    if (point.area === null) continue;
+    const place = top.find((candidate) => candidate.id === key)!;
+    const members = membersOf({ key, box, shape: place.shape, shapePath: place.shapePath }, boxes.filter((other) => !other.group));
+    if (members.length === 0) continue;
+    const depths = members.map((member) => member.point.position[2] - point.position[2]);
+    point.area.depth = [Math.min(0, ...depths) - AREA_DEPTH_PAD, Math.max(0, ...depths) + AREA_DEPTH_PAD];
   }
 
   for (const parent of points.slice()) {
@@ -122,6 +163,26 @@ export function buildGalaxyModel(store: Store, graph: GraphIndex, boardId: Id): 
       points.push(point);
       if (!pointOfRecord.has(place.to)) pointOfRecord.set(place.to, point);
       lines.push({ key: `cluster:${place.id}`, from: parent.position, to: world, fromKey: parent.key, toKey: point.key, kind: "cluster", start: "none", end: "none" });
+    });
+  }
+
+  // Small items inside a page or a link object (SPEC 1.1): satellites of their home, with a line to each (as the cards
+  // of a group). They have no card: they cannot move in 3D, and their menu has no Delete.
+  for (const host of points.slice()) {
+    if (host.kind !== "item" || host.isBoard || host.isReference) continue;
+    const entries = insideEntries(store, graph, host.recordId);
+    entries.forEach((entry, index) => {
+      const angle = (index / Math.max(1, entries.length)) * Math.PI * 2 + Math.PI / 2;
+      const world: Point3 = [host.position[0] + Math.cos(angle) * SATELLITE_ORBIT, host.position[1] + Math.sin(angle) * SATELLITE_ORBIT, host.position[2] + 0.15];
+      const card: PlaceLink = { id: entry.link?.id ?? `old:${entry.item.id}`, kind: "place", from: host.recordId, to: entry.item.id, x: 0, y: 0, w: entry.w ?? 200, h: entry.h ?? 100, view: entry.view };
+      const point = makePoint(store, graph, card, 2, world, host.position);
+      point.key = `inside:${card.id}`;
+      point.placeId = "";
+      point.satellite = true;
+      point.isReference = false;
+      points.push(point);
+      if (!pointOfRecord.has(entry.item.id)) pointOfRecord.set(entry.item.id, point);
+      lines.push({ key: `inside:${card.id}`, from: host.position, to: world, fromKey: host.key, toKey: point.key, kind: "cluster", start: "none", end: "none" });
     });
   }
 
@@ -153,6 +214,7 @@ export function buildGalaxyModel(store: Store, graph: GraphIndex, boardId: Id): 
       groupType: calendar ? "calendar" : "outline",
       tree: calendar ? [] : outlineRows(store, graph, group.id).map((row) => ({ depth: row.depth, label: `${row.marker !== "" ? `${row.marker} ` : ""}${titleOfRecord(store, row.recordId)}` })),
       days: calendar ? cardsByDay(store, graph, group.id).size : 0,
+      area: null,
     };
     points.push(point);
     for (const member of members) lines.push({ key: `group:${group.id}:${member.key}`, from: position, to: member.position, fromKey: point.key, toKey: member.key, kind: "cluster", start: "none", end: "none" });
@@ -206,7 +268,7 @@ function makePoint(
   const stamp = store.get("stamps", place.to);
   const kind: GalaxyPointKind = item !== undefined ? "item" : stamp !== undefined ? "stamp" : "ghost";
   // A note with no name has no label. Other items with no name show "Untitled".
-  const label = item !== undefined ? (item.name !== "" || place.view === "note" ? item.name : "Untitled") : stamp !== undefined ? stamp.alt : "Missing item";
+  const label = item !== undefined ? (item.name !== "" || place.view === "note" ? item.name : place.view === "group" ? "Group" : "Untitled") : stamp !== undefined ? stamp.alt : "Missing item";
   const hoverLabel = item !== undefined && item.name === "" ? snippetOf(store.get("texts", place.to)?.body ?? "") || "Empty note" : label;
   return {
     key: place.id,
@@ -227,7 +289,14 @@ function makePoint(
     groupType: item !== undefined && graph.isBoardItem(place.to) ? boardGroupType(store, graph, place.to) : null,
     tree: [],
     days: 0,
+    area: item !== undefined && place.view === "group" && !graph.isBoardItem(place.to) ? { outline: areaOf(place), filled: place.filled === true, color: place.color ?? null, depth: [0, 0] } : null,
   };
+}
+
+/** The outline of a group card in 3D units, around its middle (y up). */
+function areaOf(place: PlaceLink): [number, number][] {
+  const box = { x: -place.w / 2, y: -place.h / 2, w: place.w, h: place.h };
+  return shapeOutline(box, place.shape, place.shapePath).map((point) => [point.x / UNITS_PER_3D, -point.y / UNITS_PER_3D]);
 }
 
 function titleOfRecord(store: Store, id: Id): string {

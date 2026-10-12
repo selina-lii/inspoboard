@@ -166,6 +166,25 @@ pub fn backup_vault(app: AppHandle, state: State<'_, AppState>, root: String) ->
     crate::backup::backup(&vault.root)
 }
 
+/// The backups of the vault (backup menu), the newest first.
+#[tauri::command]
+pub fn list_backups(app: AppHandle, state: State<'_, AppState>, root: String) -> Result<Vec<crate::backup::BackupEntry>, String> {
+    let mut slot = state.vault.lock().map_err(|_| "Internal lock error.".to_string())?;
+    let vault = ensure_open(&app, &mut slot, &root)?;
+    crate::backup::list(&vault.root)
+}
+
+/// Deletes one backup for good (the user confirmed in the app).
+#[tauri::command]
+pub fn delete_backup(app: AppHandle, state: State<'_, AppState>, root: String, name: String) -> Result<(), String> {
+    let mut slot = state.vault.lock().map_err(|_| "Internal lock error.".to_string())?;
+    let vault = ensure_open(&app, &mut slot, &root)?;
+    if vault.read_only {
+        return Err("The vault is read-only: a different Inspoboard window has it open.".to_string());
+    }
+    crate::backup::delete(&vault.root, &name)
+}
+
 #[tauri::command]
 pub fn list_snapshots(app: AppHandle, state: State<'_, AppState>, root: String, limit: usize) -> Result<Vec<SnapshotInfo>, String> {
     let mut slot = state.vault.lock().map_err(|_| "Internal lock error.".to_string())?;
@@ -308,8 +327,15 @@ pub fn web_path(relative: &str) -> Option<(&'static str, &str)> {
     }
     let name = relative.strip_prefix("web/")?;
     let (key, extension) = name.split_once('.')?;
-    let valid_key = key.len() == 24 && key.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase());
-    (valid_key && matches!(extension, "html" | "pdf" | "notes.json")).then_some((WEB_FOLDER, name))
+    (is_web_key(key) && matches!(extension, "html" | "pdf" | "notes.json")).then_some((WEB_FOLDER, name))
+}
+
+/// A key of a web file: the ID of its link object (12 characters: a-z, 0-9), or (older vaults) the hash of its web
+/// address (24 hex digits).
+fn is_web_key(key: &str) -> bool {
+    let hash = key.len() == 24 && key.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase());
+    let id = key.len() == 12 && key.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit());
+    hash || id
 }
 
 /// A saved web page or its notes, or None if the file is not there.
@@ -384,7 +410,7 @@ pub fn write_web_bytes(app: AppHandle, state: State<'_, AppState>, request: taur
 /// Copies a PDF file (from a file dialog) into the vault: `web/<key>.pdf`. The key comes from the content:
 /// the same file gives the same key. Returns the key.
 #[tauri::command]
-pub fn import_pdf(app: AppHandle, state: State<'_, AppState>, root: String, source: String) -> Result<String, String> {
+pub fn import_pdf(app: AppHandle, state: State<'_, AppState>, root: String, source: String, key: Option<String>) -> Result<String, String> {
     use std::hash::{Hash, Hasher};
     let source = local_path(&source)?;
     if !source.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("pdf")) {
@@ -400,7 +426,12 @@ pub fn import_pdf(app: AppHandle, state: State<'_, AppState>, root: String, sour
     let mut second = std::collections::hash_map::DefaultHasher::new();
     (bytes.len(), "inspoboard-pdf").hash(&mut second);
     bytes.iter().rev().take(4096).collect::<Vec<_>>().hash(&mut second);
-    let key = format!("{:016x}{:08x}", first.finish(), second.finish() as u32);
+    // The copy of a link object (its ID), or (no link object) the hash of the file.
+    let key = match key {
+        Some(id) if is_web_key(&id) && id.len() == 12 => id,
+        Some(id) => return Err(format!("\"{id}\" is not the ID of a link object.")),
+        None => format!("{:016x}{:08x}", first.finish(), second.finish() as u32),
+    };
     let mut slot = state.vault.lock().map_err(|_| "Internal lock error.".to_string())?;
     let vault = ensure_open(&app, &mut slot, &root)?;
     if vault.read_only {
@@ -702,6 +733,11 @@ mod tests {
         assert_eq!(web_path("marks/../items.json"), None);
         assert_eq!(web_path("marks/A1B2C3D4E5F6.json"), None);
         assert!(web_path("web/0123456789abcdef01234567.notes.json").is_some());
+        // The copy of a link object: its item ID.
+        assert_eq!(web_path("web/a1b2c3d4e5f6.html"), Some(("web", "a1b2c3d4e5f6.html")));
+        assert!(web_path("web/a1b2c3d4e5f6.notes.json").is_some());
+        assert_eq!(web_path("web/A1b2c3d4e5f6.html"), None);
+        assert_eq!(web_path("web/a1b2c3d4e5f.html"), None);
         assert_eq!(web_path("web/0123456789ABCDEF01234567.html"), None);
         assert_eq!(web_path("web/../table/items.jsonl"), None);
         assert_eq!(web_path("web/0123456789abcdef01234567.js"), None);

@@ -19,10 +19,20 @@
     "img, input[type=image]",
     "img, video[poster], input[type=image]",
     "script, noscript, iframe, frame, frameset, object, embed, applet, base, portal, picture > source, video > source, audio > source, track",
-    "script, style, noscript, template, nav, aside, button, select, option, textarea, svg, math, iframe, [hidden]",
+    "script, style, noscript, template, nav, aside, button, select, option, textarea, svg, iframe, [hidden], .katex-html, .MathJax_Preview",
     "translate(-50%, 0) translate({0}px, {1}px)",
     "translate({0} {1})",
     "translate({0} {1}) rotate({2})",
-    "video, audio"
+    "video, audio",
+    "The vault has errors. The migration does nothing. Fix the errors first (open the vault in the app to see them):",
+    "Address {0}: {1} link objects. The old notes go to the oldest one (\"{2}\", {3}). Use the link bench to move small items to another one.",
+    "Notes file web/{0} is not valid JSON. It stays as it is (nothing changes for {1}).",
+    "Notes file web/{0}: {1} entries are not valid comments or notes. They stay in the notes file of {2}.",
+    "Saved pages and PDFs: {0} copies for link objects (web/<link object ID>.*). The old shared files stay.",
+    "Notes files: {0} written for link objects (web/<link object ID>.notes.json).",
+    "Comments and notes on web pages and PDFs: {0} become vault items inside their link object.",
+    "Old shared files with no link object: {0}. They stay as they are (nothing is lost). Files:",
+    "Nothing to do: the vault has the new format already.",
+    "The new vault files have errors. The migration does nothing. Tell the developer:"
   ]
 }

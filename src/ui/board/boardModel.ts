@@ -4,9 +4,9 @@
 
 import type { GraphIndex } from "../../core/graph";
 import { outlineLayout, outlineRows, parentPairs, sequencePairs } from "../../core/outline";
-import { boardGroupType, calendarSize, CALENDAR, daysBetween, daysOf, defaultMonth, gridDays, isCalendar, monthsOf, monthOf, startMinutes } from "../../core/groups";
+import { boardGroupType, calendarSize, CALENDAR, daysBetween, daysOf, defaultMonth, gridDays, isCalendar, monthsOf, monthOf, dayOrder } from "../../core/groups";
 import type { Store } from "../../core/store";
-import { DEFAULT_END_CAP, DEFAULT_START_CAP, type Id, type LinkCap, type ListStyle, type PlaceLink, type QuoteMarks, type ViewStyle } from "../../core/types";
+import { DEFAULT_END_CAP, DEFAULT_START_CAP, type GroupShape, type Id, type LinkCap, type ListStyle, type PlaceLink, type QuoteMarks, type ViewStyle } from "../../core/types";
 import { defaultQuoteMarks } from "../../core/actions";
 
 export type BoardNodeKind = "item" | "stamp" | "ghost" | "stub" | "outline" | "calendar";
@@ -87,7 +87,7 @@ function layoutCalendar(store: Store, graph: GraphIndex, calendar: { id: Id; x: 
     else first.more.push(part);
   }
   for (const [slot, places] of singles) {
-    const ordered = [...places].sort((a, b) => startMinutes(a) - startMinutes(b));
+    const ordered = [...places].sort(dayOrder(store));
     const before = lanes.get(row(slot)) ?? 0;
     ordered.forEach((place, index) => {
       const open = ordered.length === 1 && before === 0 && place.expanded === true;
@@ -117,7 +117,8 @@ export const OUTLINE_PADDING = 12;
 export const OUTLINE_BAR = 26;
 
 /** A scribble that a note holds. Its position is relative to the note card. */
-export type InnerStamp = { placeId: Id; stampId: Id; x: number; y: number; w: number; h: number; path: string; alt: string };
+/** `color`: the ink of the scribble (the place link color), or null for the theme ink. */
+export type InnerStamp = { placeId: Id; stampId: Id; x: number; y: number; w: number; h: number; path: string; alt: string; color: string | null };
 
 export type BoardNode = {
   /** Node ID. For placed records it is the place link ID. */
@@ -188,6 +189,11 @@ export type BoardNode = {
   attachedTo: Id | null;
   /** A board that holds only one group is that kind of board. */
   boardGroup: "outline" | "calendar" | null;
+  /** A group card (view "group"): its shape, and the path of a free shape (else ""). */
+  shape: GroupShape;
+  shapePath: string;
+  /** A group card: filled with its color (else only its outline). */
+  filled: boolean;
   /** A page card: the number of open comments in the page. The card shows a dot if it is above 0. */
   openComments: number;
 };
@@ -354,6 +360,14 @@ export function buildBoardModel(store: Store, graph: GraphIndex, boardId: Id, vi
     edges.push({ id: `attach:${node.id}`, kind: "attach", source: node.id, target: target.id, linkId: null, start: "none", end: "none", offset: 0 });
   }
 
+  // Comments inside a page or a link object (inside links, SPEC 1.1): open ones count for the dot too.
+  for (const node of nodes) {
+    if (node.kind !== "item" || node.isReference) continue;
+    for (const link of graph.insideOf(node.recordId)) {
+      if (link.view === "comment" && store.get("items", link.to)?.resolved !== true && store.has("items", link.to)) node.openComments += 1;
+    }
+  }
+
   if (inPage.size > 0) {
     const kept = nodes.filter((node) => !inPage.has(node));
     nodes.length = 0;
@@ -496,6 +510,9 @@ function emptyNode(): BoardNode {
     pinned: false,
     replies: [],
     boardGroup: null,
+    shape: "rect",
+    shapePath: "",
+    filled: false,
   };
 }
 
@@ -503,7 +520,7 @@ function emptyNode(): BoardNode {
 function innerStampsOf(store: Store, graph: GraphIndex, itemId: Id): InnerStamp[] {
   return graph.childrenOf(itemId).flatMap((place) => {
     const stamp = store.get("stamps", place.to);
-    return stamp === undefined ? [] : [{ placeId: place.id, stampId: stamp.id, x: place.x, y: place.y, w: place.w, h: place.h, path: stamp.path, alt: stamp.alt }];
+    return stamp === undefined ? [] : [{ placeId: place.id, stampId: stamp.id, x: place.x, y: place.y, w: place.w, h: place.h, path: stamp.path, alt: stamp.alt, color: place.color ?? null }];
   });
 }
 
@@ -558,6 +575,9 @@ function placedNode(store: Store, graph: GraphIndex, place: PlaceLink): BoardNod
     quote: item.quote ?? "",
     replies: place.view === "comment" ? repliesOf(store, graph, item.id) : [],
     boardGroup: isBoard ? boardGroupType(store, graph, place.to) : null,
+    shape: place.shape ?? "rect",
+    shapePath: place.shapePath ?? "",
+    filled: place.filled === true,
   };
 }
 

@@ -1,14 +1,17 @@
-// Web pages with notes. See docs/SPEC.md section 7.8.
-// - A saved page with notes (a highlight, a scribble, a comment, or a note on its canvas) is "local": a click on its
-//   link opens the saved copy (never the live web page), so the notes stay on the text they were made on.
+// Web pages with notes. See docs/SPEC.md sections 1.1 and 7.8.
+// - A copy with notes (a highlight, a scribble, or a small item on its canvas) is "local": a click on its link opens
+//   the saved copy (never the live web page), so the notes stay on the text they were made on.
 //   The menu of the link keeps "Open in web browser".
-// - The app reads web/<key>.notes.json to know it. It keeps the answers while the vault is open.
+// - Each link object has its own copy (webHomes.ts). The app reads its notes file (or the old shared notes) and its
+//   small items. It keeps the answers while the vault is open.
 
 import { useEffect, useSyncExternalStore } from "react";
+import type { Id } from "../../core/types";
 import type { Session } from "../../io/session";
-import { isWebUrl, normalizeUrl, notesPath, readNotes, webKey, type WebNotes } from "./savedPages";
+import { isLocalPath, notesPath, readNotes, type WebNotes } from "./savedPages";
+import { legacyKey, notesSourceOf } from "./webHomes";
 
-type Cache = { keys: Map<string, string>; annotated: Map<string, boolean> };
+type Cache = { annotated: Map<Id, boolean>; asked: Set<Id> };
 const caches = new WeakMap<Session, Cache>();
 const listeners = new Set<() => void>();
 let version = 0;
@@ -16,7 +19,7 @@ let version = 0;
 function cacheOf(session: Session): Cache {
   let cache = caches.get(session);
   if (cache === undefined) {
-    cache = { keys: new Map(), annotated: new Map() };
+    cache = { annotated: new Map(), asked: new Set() };
     caches.set(session, cache);
   }
   return cache;
@@ -32,43 +35,33 @@ export function hasNotes(notes: WebNotes): boolean {
   return notes.highlights.length > 0 || notes.scribbles.length > 0 || notes.items.length > 0;
 }
 
-/** The reader tells the app the notes state of a page (at load, and after each change). */
-export function setAnnotated(session: Session, key: string, value: boolean): void {
+/** The reader tells the app the notes state of a link object (at load, and after each change). */
+export function setAnnotated(session: Session, itemId: Id, value: boolean): void {
   const cache = cacheOf(session);
-  if (cache.annotated.get(key) === value) return;
-  cache.annotated.set(key, value);
+  if (cache.annotated.get(itemId) === value) return;
+  cache.annotated.set(itemId, value);
   changed();
 }
 
-async function keyOf(cache: Cache, url: string): Promise<string> {
-  const normal = normalizeUrl(url);
-  let key = cache.keys.get(normal);
-  if (key === undefined) {
-    key = await webKey(normal);
-    cache.keys.set(normal, key);
-  }
-  return key;
-}
-
-/** True if the saved copy of a web address has notes. Reads the notes file the first time. */
-export async function isAnnotated(session: Session, url: string): Promise<boolean> {
-  if (!isWebUrl(url)) return false;
+/** True if the copy of a link object has notes or small items. Reads the notes file the first time. */
+export async function isAnnotated(session: Session, itemId: Id, url: string): Promise<boolean> {
+  if (session.graph.insideOf(itemId).length > 0) return true;
   const cache = cacheOf(session);
-  const key = await keyOf(cache, url);
-  const known = cache.annotated.get(key);
+  const known = cache.annotated.get(itemId);
   if (known !== undefined) return known;
   let value = false;
   try {
-    value = hasNotes(readNotes(await session.readWebFile(notesPath(key))));
+    const shared = isLocalPath(url) ? null : await legacyKey(url);
+    value = hasNotes(readNotes(await session.readWebFile(notesPath(await notesSourceOf(session, itemId, url, shared)))));
   } catch {
     value = false;
   }
-  setAnnotated(session, key, value);
+  setAnnotated(session, itemId, value);
   return value;
 }
 
-/** For a link card: true if its page has notes (false until the app knows). */
-export function useAnnotated(session: Session, url: string): boolean {
+/** For a link card: true if its copy has notes or small items (false until the app knows). */
+export function useAnnotated(session: Session, itemId: Id, url: string): boolean {
   useSyncExternalStore(
     (listener) => {
       listeners.add(listener);
@@ -77,10 +70,11 @@ export function useAnnotated(session: Session, url: string): boolean {
     () => version,
   );
   useEffect(() => {
-    if (url !== "" && isWebUrl(url)) void isAnnotated(session, url);
-  }, [session, url]);
-  if (!isWebUrl(url)) return false;
-  const cache = cacheOf(session);
-  const key = cache.keys.get(normalizeUrl(url));
-  return key !== undefined && cache.annotated.get(key) === true;
+    const cache = cacheOf(session);
+    if (url === "" || cache.asked.has(itemId)) return;
+    cache.asked.add(itemId);
+    void isAnnotated(session, itemId, url);
+  }, [session, itemId, url]);
+  if (url === "") return false;
+  return session.graph.insideOf(itemId).length > 0 || cacheOf(session).annotated.get(itemId) === true;
 }

@@ -143,8 +143,16 @@ impl Plugin {
                 return Err(format!("The language pack \"{}\" is not installed. Download it in Settings → Plugins.", pack.name));
             }
             let prompts: Vec<Vec<prompts::Part>> = pending.iter().map(|&index| prompts::build(route, &jobs[index].source, &jobs[index].target, &jobs[index].line)).collect();
-            let mut engine = self.engine.lock().map_err(|_| "Internal lock error.")?;
+            // The engine starts in the background when the plugin starts (see main). If it is not ready yet, say so.
+            let mut engine = match self.engine.try_lock() {
+                Ok(engine) => engine,
+                Err(_) => {
+                    self.progress(0.0, texts.len() as f64, STARTING);
+                    self.engine.lock().map_err(|_| "Internal lock error.")?
+                }
+            };
             if engine.is_none() {
+                self.progress(0.0, texts.len() as f64, STARTING);
                 *engine = Some(Engine::new()?);
             }
             let path = packs::path_of(&self.packs, pack);
@@ -209,6 +217,9 @@ impl Plugin {
     }
 }
 
+/// The progress label while the engine starts. It compiles its GPU programs: about one minute on an Apple M4.
+const STARTING: &str = "Starting the translation engine (about 1 minute after the app starts)…";
+
 fn main() {
     let plugin = Arc::new(Plugin {
         out: Mutex::new(std::io::stdout()),
@@ -217,6 +228,18 @@ fn main() {
         cache: Mutex::new(HashMap::new()),
         packs: packs::folder(),
     });
+    // Start the engine now, in the background, if a pack is installed: the first translation then need not wait for it.
+    // The app starts the plugin when it starts. The model itself loads at the first translation.
+    if PACKS.iter().any(|pack| packs::is_installed(&plugin.packs, pack)) {
+        let warm = plugin.clone();
+        std::thread::spawn(move || {
+            if let Ok(mut engine) = warm.engine.lock()
+                && engine.is_none()
+            {
+                *engine = Engine::new().ok();
+            }
+        });
+    }
     // Each request runs on its own thread. Thus "cancel" works while a translation runs.
     for line in std::io::stdin().lock().lines() {
         let Ok(line) = line else { break };

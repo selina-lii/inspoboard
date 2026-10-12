@@ -9,6 +9,7 @@
 // - The translation goes on when the page closes. Open the page again: the column shows the results so far, and
 //   the rest as they come.
 
+import { isEquationText } from "./webText";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { usePlugins } from "../plugins/pluginsContext";
 import { useSession, useSessionState } from "../app/sessionContext";
@@ -70,14 +71,17 @@ export function usePageTranslation(key: string, paragraphs: readonly PageParagra
         setState(before);
         return;
       }
-      let next: Cached = { plugin, optionsKey, texts: paragraphs.map(() => null) };
+      // Equations (PDF math glyphs) stay as they are: only the other paragraphs go to the plugin.
+      const equation = paragraphs.map((paragraph) => isEquationText(paragraph.text));
+      let next: Cached = { plugin, optionsKey, texts: paragraphs.map((paragraph, index) => (equation[index] ? paragraph.text : null)) };
       publish(key, next);
+      const order = paragraphs.flatMap((_, index) => (equation[index] ? [] : [index]));
       await plugins.transformList(
         plugin,
-        paragraphs.map((paragraph) => paragraph.text),
+        order.map((index) => paragraphs[index]!.text),
         (start, results) => {
           const texts = [...next.texts];
-          results.forEach((text, index) => (texts[start + index] = text));
+          results.forEach((text, offset) => (texts[order[start + offset]!] = text));
           next = { ...next, texts };
           publish(key, next);
         },
@@ -129,20 +133,35 @@ type ColumnProps = {
 /** The results, each level with its paragraph. Inside the scaled canvas layer: units are page units. */
 export function TranslationColumn({ left, paragraphs, texts, topOf, layoutKey, onHeight, width, zoom, onWidth, spoken }: ColumnProps) {
   const refs = useRef<(HTMLDivElement | null)[]>([]);
-  const [tops, setTops] = useState<number[]>([]);
+  // Each translation starts level with its paragraph and has the room up to the next paragraph (it scrolls inside
+  // that box). Thus a long translation never pushes the next ones down: the column never drifts from the page.
+  const [boxes, setBoxes] = useState<{ top: number; height: number | null }[]>([]);
   useLayoutEffect(() => {
+    const wanted = paragraphs.map((paragraph) => topOf(paragraph));
     let bottom = 0;
-    const next = paragraphs.map((paragraph, index) => {
-      const wanted = topOf(paragraph) ?? bottom;
-      const top = Math.max(wanted, bottom);
-      bottom = top + (refs.current[index]?.offsetHeight ?? 0) + 8;
-      return top;
+    const next = paragraphs.map((_, index) => {
+      // Level with its paragraph; not above the box before (two columns of a PDF page: one under the other).
+      const top = Math.max(wanted[index] ?? bottom, bottom);
+      const following = wanted.slice(index + 1).find((value) => value !== null && value > top + 1) ?? null;
+      const height = following === null ? null : Math.max(MIN_BOX, following - top - BOX_GAP);
+      bottom = top + (height ?? refs.current[index]?.offsetHeight ?? 0) + BOX_GAP;
+      return { top, height };
     });
-    setTops((before) => (before.length === next.length && before.every((value, index) => Math.abs(value - next[index]!) < 0.5) ? before : next));
+    setBoxes((before) => (before.length === next.length && before.every((value, index) => Math.abs(value.top - next[index]!.top) < 0.5 && value.height === next[index]!.height) ? before : next));
     onHeight(bottom);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [texts, paragraphs, layoutKey, width]);
+  const tops = boxes.map((box) => box.top);
   const mark = useRef<HTMLElement>(null);
+  // The sentence that is read aloud: its box scrolls (inside) so that the marked text is in view.
+  const spokenKey = spoken === null ? null : `${spoken.paragraph}:${spoken.range.start}`;
+  useEffect(() => {
+    const element = mark.current;
+    const box = element?.closest(".translation-paragraph") as HTMLElement | null | undefined;
+    if (element == null || box == null || box.scrollHeight <= box.clientHeight) return;
+    const top = element.offsetTop - box.offsetTop;
+    if (top < box.scrollTop || top + element.offsetHeight > box.scrollTop + box.clientHeight) box.scrollTo({ top: Math.max(0, top - box.clientHeight / 3), behavior: "smooth" });
+  }, [spokenKey]);
   const onResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
     event.preventDefault();
@@ -168,7 +187,13 @@ export function TranslationColumn({ left, paragraphs, texts, topOf, layoutKey, o
         const text = texts[index] ?? paragraph.text;
         const range = spoken !== null && spoken.paragraph === index && texts[index] != null ? spoken.range : null;
         return (
-          <div key={index} ref={(element) => void (refs.current[index] = element)} className={`translation-paragraph${texts[index] == null ? " waiting" : ""}`} style={{ top: tops[index] ?? 0 }} dir="auto">
+          <div
+            key={index}
+            ref={(element) => void (refs.current[index] = element)}
+            className={`translation-paragraph${texts[index] == null ? " waiting" : ""}${boxes[index]?.height != null ? " boxed" : ""}`}
+            style={{ top: boxes[index]?.top ?? 0, height: boxes[index]?.height ?? undefined }}
+            dir="auto"
+          >
             {range === null ? (
               text
             ) : (
@@ -192,6 +217,10 @@ export function TranslationColumn({ left, paragraphs, texts, topOf, layoutKey, o
     </div>
   );
 }
+
+/** The smallest box of a translation (page units), and the space between two boxes. */
+const MIN_BOX = 28;
+const BOX_GAP = 4;
 
 /** The top of a paragraph from its boxes. */
 export function firstTop(boxes: Box[]): number | null {

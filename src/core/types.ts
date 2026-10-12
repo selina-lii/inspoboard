@@ -82,10 +82,15 @@ export type TextRecord = {
  * - "flashcard": two sides: the name is the front, the text is the back. A click flips it.
  * - "quote": a passage on paper, framed by quotation marks (`PlaceLink.marks`). The text is the passage; the name
  *   is its source (it can be empty).
+ * - "group": a loose area of the board, a shape (`PlaceLink.shape`) with a name. The cards in the shape are in the
+ *   group (by position only: nothing else is saved). Shapes can overlap: a card can be in more than one group.
  */
-export type ViewStyle = "note" | "page" | "text" | "comment" | "weblink" | "todo" | "flashcard" | "quote";
+export type ViewStyle = "note" | "page" | "text" | "comment" | "weblink" | "todo" | "flashcard" | "quote" | "group";
 
-export const VIEW_STYLES: readonly ViewStyle[] = ["note", "page", "text", "comment", "weblink", "todo", "flashcard", "quote"];
+export const VIEW_STYLES: readonly ViewStyle[] = ["note", "page", "text", "comment", "weblink", "todo", "flashcard", "quote", "group"];
+/** The shape of a group card: a rounded rectangle, an ellipse, or a free shape (`PlaceLink.shapePath`). */
+export type GroupShape = "rect" | "ellipse" | "blob";
+export const GROUP_SHAPES: readonly GroupShape[] = ["rect", "ellipse", "blob"];
 /** The object views (one tool bar button for all). */
 export const OBJECT_VIEWS: readonly ViewStyle[] = ["comment", "weblink", "todo", "flashcard", "quote"];
 
@@ -134,6 +139,15 @@ export type PlaceLink = {
   time?: string;
   /** A quote card: its quotation marks. Missing: from the text (CJK text 「 」, else ‘ ’). */
   marks?: QuoteMarks;
+  /** A group card: its shape. Missing: a rounded rectangle. */
+  shape?: GroupShape;
+  /**
+   * A group card with a free shape: its outline, a closed SVG path ("M x y L x y … Z") in a 100 × 100 box. The box
+   * stretches to the card size.
+   */
+  shapePath?: string;
+  /** A group card: true if it is filled with its color. Missing: only its outline shows. */
+  filled?: true;
 };
 
 /** The shape at one end of a link line. */
@@ -189,7 +203,41 @@ export type RelationLink = {
   fromQuote?: string;
 };
 
-export type LinkRecord = PlaceLink | RelationLink;
+/**
+ * A small item inside a medium item (SPEC 1.1): a comment, a note, an action item, … in a page, or in the saved web
+ * page or PDF of a link object. The home (`from`) stays a page or a link object: it never becomes a board.
+ * - `view`: the kind of the small item (as the view of a card).
+ * - `x`, `y`: its place in the home. A page: px from the top-right corner of the text. A saved web page or PDF: page
+ *   units from the top-left corner of the page (a left margin has negative x). Missing: in the comment column of a page.
+ * - `w`, `h`: its size. Missing: the default size.
+ * - `quote`: the text in the home that the item points to (an exact text of the page body, or of the saved page).
+ *   `at`: where that text starts (a string index), to find the right one if the text occurs more than one time.
+ */
+export type InsideLink = {
+  id: Id;
+  kind: "inside";
+  from: Id;
+  to: Id;
+  view: ViewStyle;
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
+  color?: string;
+  expanded?: boolean;
+  quote?: string;
+  at?: number;
+};
+
+/**
+ * The kinds of small items (SPEC 1.1): the small-item button makes them, and they can go inside a page or a saved web
+ * page. A text card is not a small item (it is its own thing).
+ */
+export const SMALL_KINDS: readonly ViewStyle[] = ["note", "comment", "weblink", "todo", "flashcard", "quote"];
+/** The kinds that an inside link may have: the small kinds, and "text" (a vault from an earlier version can have it). */
+export const SMALL_VIEWS: readonly ViewStyle[] = [...SMALL_KINDS, "text"];
+
+export type LinkRecord = PlaceLink | RelationLink | InsideLink;
 
 /** A small freehand drawing. `path` is an SVG path. Coordinates have one decimal. */
 export type StampRecord = {

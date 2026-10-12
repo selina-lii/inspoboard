@@ -4,12 +4,16 @@
 // - The skip rules (reading.ts) change the words to say. The highlight stays on the full sentence.
 // - With a translation, the app reads the English text: the original or the translation.
 // - The audio is in memory only. "Save audio file" lets the plugin write one file where the user selects.
-// - Keys while it reads: Left and Right go to the previous and next sentence. Ctrl, ⌘, or Option + Left and Right
-//   change the speed by 0.1.
+// - A change of a reading setting while it reads drops the ready audio. Reading goes on with the new setting, from
+//   the current sentence. A change of the voice options plays the current sentence again with them.
+// - Keys while it reads: Space pauses and plays. Left and Right go to the previous and next sentence. Ctrl, ⌘, or
+//   Option + Left and Right change the speed by 0.1.
+// - Formulas (LaTeX in a text, MathML in a web page): with a "math-text" plugin, they are said as words (formulas.ts).
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Id } from "../../core/types";
-import { readClip, readSentences, type Sentence } from "../../io/plugins";
+import { readClip, readSentences, readTexts, type Sentence } from "../../io/plugins";
+import { findFormulas, mergeFormulas, speakFormulas, type Formula } from "./formulas";
 import { SPEECH_RATE_RANGE, type SpeechMode } from "../../io/settings";
 import { isTextTarget } from "../app/dom";
 import { latinShare, prepareSentences } from "./reading";
@@ -38,25 +42,40 @@ export type SpeechState = {
   loading?: boolean;
   /** Mode "all audio first": the clips that are ready before it plays. */
   prepare?: { done: number; total: number } | null;
+  /** Formulas that the page gave (a web page). Formulas in the text itself are found again each time. */
+  formulas?: readonly Formula[];
+  /** "Read selected text": the reading stops at this string index (the end of the selection). */
+  until?: number;
+  /** The audio is ready up to this sentence index (not included), from the current sentence: the "ready" cursor. */
+  readyEnd?: number;
 };
+
+/** What "Read aloud" reads: from the start, only the selected text, or from the selected text to the end. */
+export type ReadMode = "start" | "selection" | "fromSelection";
 
 export type SpeechValue = {
   state: SpeechState | null;
   error: string | null;
-  read(plugin: string, itemId: Id): Promise<void>;
-  /** Reads a text that is not an item text, for example a web page. `from`: a string index to start at. */
-  readText(plugin: string, sourceId: string, text: string, from?: number): Promise<void>;
+  read(plugin: string, itemId: Id, mode?: ReadMode): Promise<void>;
+  /**
+   * Reads a text that is not an item text, for example a web page. `from`: a string index to start at. `formulas`:
+   * formulas of the page. `until`: the reading stops at this string index (selected text only).
+   */
+  readText(plugin: string, sourceId: string, text: string, from?: number, formulas?: readonly Formula[], until?: number): Promise<void>;
   saveAudio(plugin: string, itemId: Id): Promise<void>;
   pause(): void;
   resume(): void;
   step(delta: number): void;
   /** Plays from the sentence at a string index of the read text. */
   seekToOffset(offset: number): void;
+  /** A click on the read text: plays from there, except when the lock is on (setting "speechLock"). */
+  clickSeek(offset: number): void;
+  setLock(locked: boolean): void;
   stop(): void;
   setRate(rate: number): void;
   setVolume(volume: number): void;
   setMode(mode: SpeechMode): void;
-  /** The read-aloud keys (Left, Right, Ctrl+Left, Ctrl+Right). True if the key was used. For keys from a frame (a web page). */
+  /** The read-aloud keys (Space, Left, Right, Ctrl+Left, Ctrl+Right). True if the key was used. For keys from a frame (a web page). */
   handleKey(event: KeyboardEvent): boolean;
 };
 
@@ -78,6 +97,21 @@ export function useSpokenSentence(sourceId: string): Spoken | null {
 }
 
 export const WEB_SOURCE = "web:";
+
+const SHOW_EVENT = "inspoboard-show-spoken";
+/**
+ * "Show the text that is read now": the view that shows the read text scrolls the spoken sentence into view (a note or
+ * page opens first if it does not show). The views listen with onShowSpoken.
+ */
+export function showSpoken(sourceId: string): void {
+  window.dispatchEvent(new CustomEvent(SHOW_EVENT, { detail: sourceId }));
+}
+/** Calls `show` at each "Show the text that is read now". Returns the function that stops it. */
+export function onShowSpoken(show: () => void): () => void {
+  const listener = () => show();
+  window.addEventListener(SHOW_EVENT, listener);
+  return () => window.removeEventListener(SHOW_EVENT, listener);
+}
 
 type Props = {
   children: ReactNode;
@@ -112,16 +146,37 @@ export function SpeechProvider({ children, onShowItem }: Props) {
     setState(null);
   }, []);
 
+  /** The sentences with each formula as words, if a "math-text" plugin is installed. Else (or on an error) as they are. */
+  const withFormulas = useCallback(
+    async (text: string, split: Sentence[], given: readonly Formula[] | undefined): Promise<Sentence[]> => {
+      const math = plugins.plugins.find((entry) => entry.details !== null && entry.capabilities.includes("math-text"));
+      if (math === undefined || hostValue === null) return split;
+      const formulas = mergeFormulas(given ?? [], findFormulas(text));
+      if (formulas.length === 0) return split;
+      try {
+        const reply = await hostValue.host.call(math.name, "math", { formulas: formulas.map(({ tex, mathml, display }) => ({ tex, mathml, display })), options: plugins.optionsOf(math.name) });
+        return speakFormulas(text, split, formulas, readTexts(reply, formulas.length));
+      } catch {
+        return split;
+      }
+    },
+    [hostValue, plugins],
+  );
+
   const begin = useCallback(
-    async (plugin: string, sourceId: string, text: string, side: SpeechSide, from: number | undefined) => {
+    async (plugin: string, sourceId: string, text: string, side: SpeechSide, from: number | undefined, formulas?: readonly Formula[], until?: number) => {
       if (hostValue === null) return;
       stop();
       setError(null);
-      setState({ plugin, sourceId, text, side, sentences: [], current: 0, playing: false, preparing: true });
+      setState({ plugin, sourceId, text, side, sentences: [], current: 0, playing: false, preparing: true, formulas, until });
+      // Start the audio output now (while the plugin makes the first clip): else the first clip starts late.
+      output().warm();
       try {
         const options = plugins.optionsOf(plugin);
-        const split = readSentences(await hostValue.host.call(plugin, "sentences", { text, options }), text.length);
-        const sentences = prepareSentences(text, split, settingsRef.current.speechSkip, settingsRef.current.speechMarkdown);
+        const split = await withFormulas(text, readSentences(await hostValue.host.call(plugin, "sentences", { text, options }), text.length), formulas);
+        const all = prepareSentences(text, split, settingsRef.current.speechSkip, settingsRef.current.speechMarkdown);
+        // Selected text only: the sentences that start before the end of the selection.
+        const sentences = until === undefined ? all : all.filter((sentence) => sentence.start < until);
         if (sentences.length === 0) throw new Error("There is no text to read.");
         // The options when the clip is made: a change of the voice or the pitch applies to the next clips.
         const fetchClip = async (sentence: Sentence) => {
@@ -138,9 +193,10 @@ export function SpeechProvider({ children, onShowItem }: Props) {
           },
           onError: (problem) => setError(problem),
           onPrepare: (prepare) => setState((value) => (value === null ? null : { ...value, prepare })),
+          onReady: (readyEnd) => setState((value) => (value === null || value.readyEnd === readyEnd ? value : { ...value, readyEnd })),
         }, (url) => URL.revokeObjectURL(url), settingsRef.current.speechAhead);
         queue.current = next;
-        setState({ plugin, sourceId, text, side, sentences, current: 0, playing: true, preparing: false });
+        setState({ plugin, sourceId, text, side, sentences, current: 0, playing: true, preparing: false, formulas, until });
         if (!sourceId.startsWith(WEB_SOURCE)) onShowItem(sourceId);
         next.start(from === undefined ? 0 : sentenceAt(sentences, from));
       } catch (problem) {
@@ -148,21 +204,22 @@ export function SpeechProvider({ children, onShowItem }: Props) {
         setState(null);
       }
     },
-    [hostValue, plugins, stop, output, onShowItem],
+    [hostValue, plugins, stop, output, onShowItem, withFormulas],
   );
 
   const read = useCallback(
-    async (plugin: string, itemId: Id) => {
+    async (plugin: string, itemId: Id, mode: ReadMode = "fromSelection") => {
       const { text, side } = readableText(session.store.get("texts", itemId)?.body ?? "", plugins.overlay.get(itemId));
-      // Start at the selected text, if the user selected text in this item (and its own text is read).
-      const selection = side === "original" ? selectionOf(itemId) : undefined;
-      await begin(plugin, itemId, text, side, selection?.from);
+      // The selected text of this item (only if its own text is read): where to start, and (selected text only) stop.
+      const selection = side === "original" && mode !== "start" ? selectionOf(itemId) : undefined;
+      const range = selection !== undefined && selection.to > selection.from ? selection : undefined;
+      await begin(plugin, itemId, text, side, range?.from, undefined, mode === "selection" ? range?.to : undefined);
     },
     [session, plugins.overlay, begin],
   );
 
   const readText = useCallback(
-    (plugin: string, sourceId: string, text: string, from?: number) => begin(plugin, sourceId, text, "original", from),
+    (plugin: string, sourceId: string, text: string, from?: number, formulas?: readonly Formula[], until?: number) => begin(plugin, sourceId, text, "original", from, formulas, until),
     [begin],
   );
 
@@ -176,7 +233,7 @@ export function SpeechProvider({ children, onShowItem }: Props) {
       const { text } = readableText(session.store.get("texts", itemId)?.body ?? "", plugins.overlay.get(itemId));
       const options = plugins.optionsOf(plugin);
       // The plugin speaks the words after the skip rules.
-      const split = readSentences(await hostValue.host.call(plugin, "sentences", { text, options }), text.length);
+      const split = await withFormulas(text, readSentences(await hostValue.host.call(plugin, "sentences", { text, options }), text.length), undefined);
       const speeches = prepareSentences(text, split, settingsRef.current.speechSkip, settingsRef.current.speechMarkdown).map((sentence) => sentence.speech);
       await plugins.callWithProgress(plugin, "export", {
         text,
@@ -187,7 +244,7 @@ export function SpeechProvider({ children, onShowItem }: Props) {
         volume: speechVolume,
       });
     },
-    [hostValue, plugins, session],
+    [hostValue, plugins, session, withFormulas],
   );
 
   // A change of the options of the reading plugin (voice, pitch) while it reads: play the current sentence again with them.
@@ -198,6 +255,33 @@ export function SpeechProvider({ children, onShowItem }: Props) {
     if (optionsKey !== lastOptions.current && lastOptions.current !== "" && optionsKey !== "") queue.current?.refresh();
     lastOptions.current = optionsKey;
   }, [optionsKey]);
+
+  // A change of a reading setting (skip rules, Markdown, how far ahead) while it reads: the ready audio is not right any
+  // more. Drop it, and read again with the new setting from the sentence that is read now.
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const readingKey = JSON.stringify([settings.speechSkip, settings.speechMarkdown, settings.speechAhead]);
+  const lastReadingKey = useRef(readingKey);
+  useEffect(() => {
+    if (readingKey === lastReadingKey.current) return;
+    lastReadingKey.current = readingKey;
+    const now = stateRef.current;
+    if (queue.current === null || now === null || now.preparing) return;
+    const at = now.sentences[now.current]?.start ?? 0;
+    void begin(now.plugin, now.sourceId, now.text, now.side, at, now.formulas, now.until);
+  }, [readingKey, begin]);
+
+  // "Show the text that is read now": a note or a page that does not show opens (its view then scrolls to the sentence).
+  const stateNow = useRef(state);
+  stateNow.current = state;
+  useEffect(
+    () =>
+      onShowSpoken(() => {
+        const sourceId = stateNow.current?.sourceId;
+        if (sourceId !== undefined && !sourceId.startsWith(WEB_SOURCE)) onShowItem(sourceId);
+      }),
+    [onShowItem],
+  );
 
   // A change of the text makes the sentence ranges wrong. Stop.
   useEffect(
@@ -223,9 +307,19 @@ export function SpeechProvider({ children, onShowItem }: Props) {
 
   const handleKey = useCallback(
     (event: KeyboardEvent): boolean => {
-      if (queue.current === null || (event.key !== "ArrowLeft" && event.key !== "ArrowRight")) return false;
+      if (queue.current === null || (event.key !== "ArrowLeft" && event.key !== "ArrowRight" && event.key !== " ")) return false;
       // In a text field the keys move the caret. Sliders and buttons do not keep them (for example after a change of the speed).
       if (event.shiftKey || isTypingTarget(event.target)) return false;
+      // Space: pause or play. (Not the click of a focused button.)
+      if (event.key === " ") {
+        if (event.ctrlKey || event.metaKey || event.altKey) return false;
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.repeat) return true;
+        if (stateRef.current?.playing === true) queue.current.pause();
+        else queue.current.resume();
+        return true;
+      }
       const delta = event.key === "ArrowLeft" ? -1 : 1;
       event.preventDefault();
       event.stopPropagation();
@@ -264,6 +358,11 @@ export function SpeechProvider({ children, onShowItem }: Props) {
         if (queue.current === null || state === null) return;
         queue.current.start(sentenceAt(state.sentences, offset));
       },
+      clickSeek: (offset) => {
+        if (queue.current === null || state === null || settings.speechLock) return;
+        queue.current.start(sentenceAt(state.sentences, offset));
+      },
+      setLock: (locked) => void session.updateSettings({ speechLock: locked }),
       stop,
       setRate,
       setVolume: (volume) => {
@@ -273,7 +372,7 @@ export function SpeechProvider({ children, onShowItem }: Props) {
       setMode: (mode) => void session.updateSettings({ speechMode: mode }),
       handleKey,
     }),
-    [state, error, read, readText, saveAudio, stop, setRate, handleKey, session],
+    [state, error, read, readText, saveAudio, stop, setRate, handleKey, session, settings.speechLock],
   );
   return <SpeechContext.Provider value={value}>{children}</SpeechContext.Provider>;
 }
@@ -319,16 +418,29 @@ class HtmlAudioOutput implements AudioOutput {
     this.element.onended = () => this.done();
   }
 
-  play(url: string): Promise<void> {
+  play(url: string, started?: () => void): Promise<void> {
     this.done();
     return new Promise((resolve, reject) => {
       this.finish = resolve;
+      this.element.onplaying = () => {
+        this.element.onplaying = null;
+        started?.();
+      };
       this.element.onerror = () => reject(new Error("The audio could not play."));
       this.element.src = url;
       this.element.defaultPlaybackRate = this.rate;
       this.element.playbackRate = this.rate;
       this.element.play().catch(reject);
     });
+  }
+
+  /** Plays a short silence. The system audio starts, so that the first clip can play at once. */
+  warm(): void {
+    if (this.finish !== null) return;
+    this.element.onplaying = null;
+    this.element.onerror = null;
+    this.element.src = silence();
+    this.element.play().catch(() => undefined);
   }
 
   pause(): void {
@@ -359,4 +471,28 @@ class HtmlAudioOutput implements AudioOutput {
     this.finish = null;
     finish?.();
   }
+}
+
+let silenceUrl: string | null = null;
+
+/** A WAV file of 0.2 seconds of silence (8 kHz, 16 bit, mono). */
+function silence(): string {
+  if (silenceUrl !== null) return silenceUrl;
+  const samples = 1600;
+  const view = new DataView(new ArrayBuffer(44 + samples * 2));
+  const text = (at: number, value: string) => [...value].forEach((char, index) => view.setUint8(at + index, char.charCodeAt(0)));
+  text(0, "RIFF");
+  view.setUint32(4, 36 + samples * 2, true);
+  text(8, "WAVEfmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, 8000, true);
+  view.setUint32(28, 16000, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  text(36, "data");
+  view.setUint32(40, samples * 2, true);
+  silenceUrl = URL.createObjectURL(new Blob([view.buffer], { type: "audio/wav" }));
+  return silenceUrl;
 }

@@ -45,6 +45,8 @@ export function linearize(store: Store, graph: GraphIndex, rootId: Id, options: 
     }
     written.add(id);
     const body = store.get("texts", id)?.body ?? "";
+    // A group card (a loose area) with no name and no text has nothing to export.
+    if (graph.homeOf(id)?.view === "group" && store.get("items", id)?.name === "" && body.trim() === "") return;
     if (graph.homeOf(id)?.view === "quote") {
       // A quote card: a Markdown quote, with its source (if it has one) on the last line.
       const source = store.get("items", id)?.name ?? "";
@@ -55,8 +57,17 @@ export function linearize(store: Store, graph: GraphIndex, rootId: Id, options: 
       blocks.push(`${heading} ${prefix}${number === "" ? "" : `${number} `}${nameOf(id)}`);
       if (body.trim() !== "") blocks.push(body.trimEnd());
     }
-    // Attached objects follow the text: links as a list, comments as quotes with their signature.
-    for (const object of graph.attachedTo(id)) {
+    // Attached objects and small items inside the item follow the text: links as a list, comments (and notes) as
+    // quotes with their signature.
+    const objects = [
+      ...graph.attachedTo(id).map((object) => ({ object, quote: object.quote, note: false })),
+      ...graph.insideOf(id).flatMap((link) => {
+        const object = store.get("items", link.to);
+        return object === undefined ? [] : [{ object, quote: link.quote, note: link.view !== "comment" && link.view !== "weblink" }];
+      }),
+    ];
+    for (const { object, quote, note } of objects) {
+      if (written.has(object.id)) continue;
       written.add(object.id);
       const text = (store.get("texts", object.id)?.body ?? "").trim();
       if (object.url !== undefined) blocks.push(`- [${object.name !== "" ? object.name : object.url}](${object.url})`);
@@ -64,7 +75,7 @@ export function linearize(store: Store, graph: GraphIndex, rootId: Id, options: 
         // A comment with its replies (one level deeper each). A resolved thread is marked.
         const lines: string[] = [];
         const quoteLines = (depth: number, value: string) => value.replace(/\n/g, `\n${"> ".repeat(depth)}`);
-        lines.push(`> **${object.author ?? words("Comment")}**${object.quote !== undefined ? ` ${words("on “{0}”", object.quote)}` : ""}${object.resolved === true ? ` ${words("(resolved)")}` : ""}: ${quoteLines(1, text)}`);
+        lines.push(`> **${object.author ?? (note ? words("Note") : words("Comment"))}**${quote !== undefined ? ` ${words("on “{0}”", quote)}` : ""}${object.resolved === true ? ` ${words("(resolved)")}` : ""}: ${quoteLines(1, text)}`);
         const replies = (id: Id, depth: number) => {
           for (const reply of graph.attachedTo(id)) {
             if (written.has(reply.id)) continue;

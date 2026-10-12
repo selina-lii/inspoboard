@@ -78,6 +78,7 @@ import {
   removeFromBoard,
   renameItem,
   setPlacementExpanded,
+  setGroupFilled,
   setQuoteMarks,
   setPlacementRects,
   readStrokesOfPlacement,
@@ -101,9 +102,9 @@ import {
   setOutlineWidth,
 } from "../../core/outline";
 import { linksOf } from "../app/textLinks";
-import { QUOTE_MARKS, type Id, type PlaceLink, type QuoteMarks, type ViewStyle } from "../../core/types";
+import { QUOTE_MARKS, SMALL_KINDS, type Id, type PlaceLink, type QuoteMarks, type ViewStyle } from "../../core/types";
 import { ScheduleDialog } from "../dialogs/ScheduleFields";
-import { addMonths, createCalendar, addDays, createOnDay, dayAt, setCardSchedule, deleteCalendar, groupDocument, groupTitle, isCalendar, monthOf, renameGroup, setCalendarRange, snapToDay } from "../../core/groups";
+import { addMonths, createCalendar, addDays, createOnDay, dayAt, setCardSchedule, deleteCalendar, groupDocument, groupTitle, isCalendar, monthOf, renameGroup, reorderInDay, setCalendarRange, snapToDay } from "../../core/groups";
 import { fileNameOf } from "../plugins/exportOverlay";
 import { isLocalPath, isPdfPath, withScheme } from "../web/savedPages";
 import { groupColor } from "../app/colors";
@@ -124,6 +125,13 @@ import { BoardCallbacksContext, COLLAPSED_HEIGHT, hasBoard, isCollapsed, isFullL
 import { cleanNumber, roundBoard } from "../../core/stamps";
 import { savedViewport, saveViewport } from "./viewports";
 import { t } from "../i18n/i18n";
+import { SCRIBBLE_COLORS } from "./PenColors";
+import { blobFromPoints, boxFromDrag, createGroupShape, membersOf } from "../../core/groupShapes";
+import { benchSlotAt, hoverBench, registerBenchSource, sendToBench } from "../app/LinkBench";
+import { pagePointAt, registerBoardDrop } from "../app/boardDrop";
+import { isPageHome, moveIn } from "../../core/inside";
+import { copyCards, pasteCards, type CopiedCard } from "../../core/clipboard";
+import { copyWebFiles } from "../web/webHomes";
 import "./board.css";
 
 export type BoardSelection = { recordIds: Id[]; placeIds: Id[]; linkIds: Id[]; outlineIds: Id[] };
@@ -375,6 +383,100 @@ function Board({ boardId, apiRef, tool: toolId, onToolChange, onOpenRecord, onSe
     };
   }, [apiRef, flow]);
 
+  // Copy and paste (⌘C / ⌘V, or Ctrl): small items and pages (core/clipboard.ts). A paste goes under the pointer,
+  // or next to the copied cards. The keys and the copy/paste events (Edit menu) both work: one runs, not both.
+  const pointer = useRef<{ x: number; y: number } | null>(null);
+  const [copyNotice, setCopyNotice] = useState<string | null>(null);
+  useEffect(() => {
+    const element = wrapper.current;
+    if (element === null) return;
+    const move = (event: PointerEvent) => {
+      pointer.current = { x: event.clientX, y: event.clientY };
+    };
+    const leave = () => {
+      pointer.current = null;
+    };
+    element.addEventListener("pointermove", move);
+    element.addEventListener("pointerleave", leave);
+    return () => {
+      element.removeEventListener("pointermove", move);
+      element.removeEventListener("pointerleave", leave);
+    };
+  }, []);
+  useEffect(() => {
+    if (copyNotice === null) return;
+    const timer = window.setTimeout(() => setCopyNotice(null), 2500);
+    return () => window.clearTimeout(timer);
+  }, [copyNotice]);
+  useEffect(() => {
+    /** Text is selected or typed: copy and paste are for the text. */
+    const forText = (target: EventTarget | null) => isTextTarget(target) || (window.getSelection()?.isCollapsed === false);
+    let lastRun = 0;
+    const copy = (): string | null => {
+      const placeIds = flow.getNodes().filter((node) => node.selected).flatMap((node) => (node.data.node.placeId === null ? [] : [node.data.node.placeId]));
+      if (placeIds.length === 0) return null;
+      const cards = copyCards(session, placeIds);
+      if (cards.length === 0) {
+        setCopyNotice("Only small items and pages can be copied for now.");
+        return null;
+      }
+      const text = cards.map((card) => [card.item.name, card.body].filter((part) => part.trim() !== "").join("\n")).join("\n\n");
+      copiedCards = { cards, pastes: 0 };
+      setCopyNotice(cards.length < placeIds.length ? `Copied ${cards.length} of ${placeIds.length}: only small items and pages can be copied for now.` : cards.length > 1 ? `Copied ${cards.length} items` : "Copied 1 item");
+      return text;
+    };
+    const paste = (): boolean => {
+      const clip = copiedCards;
+      if (clip === null || readOnly) return false;
+      clip.pastes += 1;
+      const left = Math.min(...clip.cards.map((card) => card.place.x));
+      const top = Math.min(...clip.cards.map((card) => card.place.y));
+      const at = pointer.current !== null ? flow.screenToFlowPosition(pointer.current) : { x: left + 24 * clip.pastes, y: top + 24 * clip.pastes };
+      const { command, placeIds, webCopies } = pasteCards(session.context, clip.cards, boardId, at);
+      pendingSelection.current = new Set(placeIds);
+      if (!runCommand(command)) return true;
+      // A link object is a full copy (SPEC 1.1): its saved page or PDF and its notes are copied too.
+      for (const copy of webCopies) {
+        const url = clip.cards.find((card) => card.item.id === copy.from)?.item.url ?? "";
+        void copyWebFiles(session, copy.from, copy.to, url).catch((problem: unknown) => console.error(problem));
+      }
+      return true;
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.shiftKey || event.altKey || forText(event.target) || isComposing(event)) return;
+      const key = shortcutKey(event);
+      if (key === "c") {
+        const text = copy();
+        if (text === null) return;
+        lastRun = Date.now();
+        event.preventDefault();
+        navigator.clipboard?.writeText(text).catch(() => undefined);
+      } else if (key === "v" && paste()) {
+        lastRun = Date.now();
+        event.preventDefault();
+      }
+    };
+    const onCopy = (event: ClipboardEvent) => {
+      if (Date.now() - lastRun < 300 || forText(event.target)) return;
+      const text = copy();
+      if (text === null) return;
+      event.preventDefault();
+      event.clipboardData?.setData("text/plain", text);
+    };
+    const onPaste = (event: ClipboardEvent) => {
+      if (Date.now() - lastRun < 300 || forText(event.target)) return;
+      if (paste()) event.preventDefault();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    document.addEventListener("copy", onCopy);
+    document.addEventListener("paste", onPaste);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("copy", onCopy);
+      document.removeEventListener("paste", onPaste);
+    };
+  }, [flow, session, boardId, readOnly, runCommand]);
+
   // One selected card. Enter: edit its name (text cards and notes: their text). F2: edit its name.
   // Outline rows: Alt+Up / Alt+Down move the row, Tab / Shift+Tab indent and outdent it.
   useEffect(() => {
@@ -441,6 +543,8 @@ function Board({ boardId, apiRef, tool: toolId, onToolChange, onOpenRecord, onSe
       const onlyScribbles = dragged.every((node) => node.data.node.kind === "stamp");
       const onlyFreeCards = dragged.every((node) => node.data.node.kind === "item" && node.data.node.outlineId === null);
       const onlyCards = dragged.every((node) => node.data.node.kind === "item" && !node.data.node.pinned);
+      // A group card is never dropped into anything: it moves with its cards.
+      if (dragged.some((node) => isGroupShape(node.data.node))) return null;
       let frame: FlowNode | null = null;
       for (const node of flow.getNodes()) {
         if (draggedIds.has(node.id) || !isInside(flow.getInternalNode(node.id)?.internals.positionAbsolute ?? node.position, node, point)) continue;
@@ -454,7 +558,7 @@ function Board({ boardId, apiRef, tool: toolId, onToolChange, onOpenRecord, onSe
           if (onlyCards && dragged.every((other) => other.data.node.outlineId === null || other.data.node.outlineId === data.outlineId)) frame = node;
           continue;
         }
-        if (data.kind !== "item" || data.isReference) continue;
+        if (data.kind !== "item" || data.isReference || isGroupShape(data)) continue;
         if (data.isBoard) return { node, kind: "board" };
         if (onlyScribbles) return { node, kind: "note" };
       }
@@ -464,11 +568,87 @@ function Board({ boardId, apiRef, tool: toolId, onToolChange, onOpenRecord, onSe
     [flow],
   );
 
+  const overBench = useRef<0 | 1 | "bench" | null>(null);
+  /**
+   * A drag of group cards: the cards in their shapes (at the drag start) move with them. `members`: node ID ->
+   * its position at the start. `start`: the position of the grabbed node at the start.
+   */
+  const groupDrag = useRef<{ start: Point; members: Map<string, Point> } | null>(null);
+  const onNodeDragStart = useCallback(
+    (_event: globalThis.MouseEvent | TouchEvent, grabbed: FlowNode, dragged: FlowNode[]) => {
+      groupDrag.current = null;
+      const groups = dragged.filter((node) => isGroupShape(node.data.node));
+      if (groups.length === 0) return;
+      const draggedIds = new Set(dragged.map((node) => node.id));
+      // Free nodes only (an outline row moves with its frame; a frame in a group moves its rows).
+      const others = flow
+        .getNodes()
+        // An attached object (pinned) stays at the side of its card: it follows the card, not the group.
+        .filter((node) => node.parentId === undefined && node.data.node.kind !== "stub" && !node.data.node.pinned)
+        .map((node) => ({ key: node.id, box: { x: node.data.node.x, y: node.data.node.y, w: node.data.node.w, h: node.data.node.h }, group: isGroupShape(node.data.node), node }));
+      const members = new Map<string, Point>();
+      // A group in a dragged group brings its own cards too.
+      const queue = [...groups];
+      const seen = new Set(queue.map((node) => node.id));
+      while (queue.length > 0) {
+        const group = queue.shift()!;
+        const data = group.data.node;
+        for (const member of membersOf({ key: group.id, box: { x: data.x, y: data.y, w: data.w, h: data.h }, shape: data.shape, shapePath: data.shapePath }, others)) {
+          if (draggedIds.has(member.key) || members.has(member.key)) continue;
+          members.set(member.key, { ...member.node.position });
+          if (member.group && !seen.has(member.key)) {
+            seen.add(member.key);
+            queue.push(member.node);
+          }
+        }
+      }
+      if (members.size > 0) groupDrag.current = { start: { ...grabbed.position }, members };
+    },
+    [flow],
+  );
+  // A small item dragged out of a page lands on the board here (SPEC 1.1). Only on the board itself, not on a window.
+  useEffect(
+    () =>
+      registerBoardDrop((clientX, clientY) => {
+        const element = document.elementFromPoint(clientX, clientY);
+        if (element?.closest(".react-flow") == null || element.closest(".text-page, .react-flow__node") !== null) return null;
+        const point = flow.screenToFlowPosition({ x: clientX, y: clientY });
+        return { boardId, x: roundBoard(point.x), y: roundBoard(point.y) };
+      }),
+    [flow, boardId],
+  );
+  // A picked bench slot: a press on a card here drags a ghost copy of its item to the bench.
+  useEffect(
+    () =>
+      registerBenchSource((element) => {
+        const nodeId = element.closest(".react-flow__node")?.getAttribute("data-id");
+        const node = nodeId == null ? undefined : flow.getNode(nodeId);
+        return node?.data.node.kind === "item" ? node.data.node.recordId : null;
+      }),
+    [flow],
+  );
+
   const onNodeDrag = useCallback(
     (event: globalThis.MouseEvent | TouchEvent, _node: FlowNode, dragged: FlowNode[]) => {
       const { clientX, clientY } = pointerOf(event);
+      // The cards in a dragged group follow it.
+      const carry = groupDrag.current;
+      if (carry !== null) {
+        const dx = _node.position.x - carry.start.x;
+        const dy = _node.position.y - carry.start.y;
+        setNodes((current) => current.map((node) => {
+          const start = carry.members.get(node.id);
+          return start === undefined ? node : { ...node, position: { x: start.x + dx, y: start.y + dy } };
+        }));
+      }
       const target = dropTargetAt(clientX, clientY, dragged);
       setDropTargetId((current) => (current === (target?.node.id ?? null) ? current : (target?.node.id ?? null)));
+      // Over the link bench: the bench shows the slot that takes the card.
+      const benchSlot = benchSlotAt(clientX, clientY);
+      if (benchSlot !== overBench.current) {
+        overBench.current = benchSlot;
+        hoverBench(benchSlot);
+      }
     },
     [dropTargetAt],
   );
@@ -476,7 +656,31 @@ function Board({ boardId, apiRef, tool: toolId, onToolChange, onOpenRecord, onSe
   const onNodeDragStop = useCallback(
     (event: globalThis.MouseEvent | TouchEvent, grabbed: FlowNode, dragged: FlowNode[]) => {
       setDropTargetId(null);
+      // The cards that a dragged group carries are moved with it (in the last step, one command).
+      const carried = groupDrag.current === null ? [] : flow.getNodes().filter((node) => groupDrag.current!.members.has(node.id));
+      groupDrag.current = null;
+      if (overBench.current !== null) hoverBench(null);
+      overBench.current = null;
       const { clientX, clientY } = pointerOf(event);
+      // A card dropped on the link bench goes into a slot. The card does not move.
+      const benchSlot = benchSlotAt(clientX, clientY);
+      if (benchSlot !== null && grabbed.data.node.kind === "item" && session.store.has("items", grabbed.data.node.recordId)) {
+        sendToBench({ itemId: grabbed.data.node.recordId }, benchSlot === "bench" ? undefined : benchSlot);
+        setLayoutRefresh((count) => count + 1);
+        return;
+      }
+      // A small card dropped on an open page goes inside the page (SPEC 1.1). One undo step.
+      const inPage = pagePointAt(clientX, clientY);
+      const grabbedNode = grabbed.data.node;
+      if (inPage !== null && !readOnly && grabbedNode.kind === "item" && grabbedNode.placeId !== null && !grabbedNode.isBoard && SMALL_KINDS.includes(grabbedNode.view) && inPage.pageId !== grabbedNode.recordId && isPageHome(session.store, session.graph, inPage.pageId)) {
+        try {
+          runCommand(moveIn(session.context, grabbedNode.placeId, inPage.pageId, inPage.at).command);
+        } catch (problem) {
+          console.error(problem);
+        }
+        setLayoutRefresh((count) => count + 1);
+        return;
+      }
       const target = dropTargetAt(clientX, clientY, dragged);
       const placeIds = [...new Set(dragged.flatMap((node) => (node.data.node.placeId === null ? [] : [node.data.node.placeId])))];
       if (target?.kind === "board") {
@@ -489,6 +693,18 @@ function Board({ boardId, apiRef, tool: toolId, onToolChange, onOpenRecord, onSe
         const calendar = session.store.get("outlines", calendarId);
         const day = calendar === undefined ? null : dayAt(calendar, target.node.data.node.month, flow.screenToFlowPosition({ x: clientX, y: clientY }));
         setLayoutRefresh((count) => count + 1);
+        // One card dropped on its own day: a new place in the order of the day (before the card under the pointer).
+        const own = grabbed.data.node.placeId === null ? undefined : session.store.get("links", grabbed.data.node.placeId);
+        if (day !== null && placeIds.length === 1 && own?.kind === "place" && own.outline === calendarId && own.day === day && own.until === undefined) {
+          const point = flow.screenToFlowPosition({ x: clientX, y: clientY });
+          const sameDay = flow
+            .getNodes()
+            .filter((node) => node.id !== grabbed.id && node.data.node.inCalendar && node.data.node.placeId !== null && (session.store.get("links", node.data.node.placeId) as PlaceLink | undefined)?.day === day && (session.store.get("links", node.data.node.placeId) as PlaceLink | undefined)?.outline === calendarId)
+            .sort((left, right) => left.position.y - right.position.y);
+          const before = sameDay.find((node) => node.position.y + (node.data.node.h ?? 0) / 2 > point.y);
+          runCommand(reorderInDay(session.context, own.id, before?.data.node.placeId ?? null));
+          return;
+        }
         // A later week row of a card on more than one day: the card starts that many days before the drop day.
         if (day !== null) runCommand(snapToDay(session.context, placeIds, calendarId, addDays(day, -grabbed.data.node.spanOffset)));
         return;
@@ -535,7 +751,7 @@ function Board({ boardId, apiRef, tool: toolId, onToolChange, onOpenRecord, onSe
       if (move.x === 0 && move.y === 0) return;
       const rects = new Map<Id, Partial<Rect>>();
       const commands: Command[] = [];
-      for (const node of dragged) {
+      for (const node of [...dragged, ...carried]) {
         const { placeId, x, y, kind, outlineId } = node.data.node;
         // An outline frame moves its outline. The cards follow from the outline layout.
         if (kind === "outline" && outlineId !== null) {
@@ -600,8 +816,8 @@ function Board({ boardId, apiRef, tool: toolId, onToolChange, onOpenRecord, onSe
   const onPaneClick = useCallback(
     (event: MouseEvent) => {
       setLinkSourceId(null);
-      // A click on the board ends a size edit of a group frame.
-      setEditing((current) => (current?.edit === "shape" ? null : current));
+      // A click on the board ends a size edit of a group frame, and a text edit (each change is saved already).
+      setEditing((current) => (current?.edit === "shape" || current?.edit === "body" ? null : current));
       if (readOnly) return;
       const point = flow.screenToFlowPosition({ x: event.clientX, y: event.clientY });
       // A new group: its title opens for typing (like a new board).
@@ -738,6 +954,8 @@ function Board({ boardId, apiRef, tool: toolId, onToolChange, onOpenRecord, onSe
       if (editing?.nodeId === node.id) return;
       const data = node.data.node;
       if (data.kind === "stub" || data.kind === "outline") return;
+      // A group card: a double-click on its name renames it (the card does it). It never opens as a page.
+      if (isGroupShape(data)) return;
       // A calendar is a group, not an item: a double-click asks for a month to show.
       if (data.kind === "calendar") {
         setEditing({ nodeId: node.id, edit: "month" });
@@ -750,7 +968,7 @@ function Board({ boardId, apiRef, tool: toolId, onToolChange, onOpenRecord, onSe
       }
       // A link object opens its web address (or asks for one).
       if (data.kind === "item" && data.view === "weblink" && !hasBoard(data)) {
-        if (data.url !== "") actions.jumpTo(data.url);
+        if (data.url !== "") actions.jumpTo(data.url, data.recordId);
         else if (!readOnly) setEditing({ nodeId: node.id, edit: "url" });
         return;
       }
@@ -763,6 +981,13 @@ function Board({ boardId, apiRef, tool: toolId, onToolChange, onOpenRecord, onSe
           return;
         }
         // A collapsed note opens first, then its text is ready for typing.
+        if (isCollapsed(data) && data.placeId !== null) runCommand(setPlacementExpanded(session.context, data.placeId, true));
+        setEditing({ nodeId: node.id, edit: "body" });
+        return;
+      }
+      // A quote edits its text in place, like a note. A folded quote (a bubble) unfolds first. It never opens as a page.
+      if (isQuote(data)) {
+        if (readOnly) return;
         if (isCollapsed(data) && data.placeId !== null) runCommand(setPlacementExpanded(session.context, data.placeId, true));
         setEditing({ nodeId: node.id, edit: "body" });
         return;
@@ -951,9 +1176,9 @@ function Board({ boardId, apiRef, tool: toolId, onToolChange, onOpenRecord, onSe
         const local = isLocalPath(link.url);
         const pdf = isPdfPath(link.url);
         if (link.url !== "") {
-          entries.push({ label: !local ? "Open in web browser" : pdf ? "Open PDF" : "Show in Finder", icon: <Globe size={14} />, onSelect: () => (local ? actions.jumpTo(link.url) : actions.openInBrowser(link.url)) });
-          if (!local) entries.push({ label: "Download and open website locally", icon: <Download size={14} />, onSelect: () => actions.openUrl(link.url) });
-          if (!local || pdf) entries.push({ label: "Read aloud", icon: <AudioLines size={14} />, onSelect: () => actions.openUrl(link.url, true) });
+          entries.push({ label: !local ? "Open in web browser" : pdf ? "Open PDF" : "Show in Finder", icon: <Globe size={14} />, onSelect: () => (local ? actions.jumpTo(link.url, link.recordId) : actions.openInBrowser(link.url)) });
+          if (!local) entries.push({ label: "Download and open website locally", icon: <Download size={14} />, onSelect: () => actions.openUrl(link.url, false, undefined, link.recordId) });
+          if (!local || pdf) entries.push({ label: "Read aloud", icon: <AudioLines size={14} />, onSelect: () => actions.openUrl(link.url, true, undefined, link.recordId) });
         }
         entries.push({ label: "Edit name and link", icon: <Pencil size={14} />, onSelect: () => setEditing({ nodeId: link.id, edit: "title" }) });
       }
@@ -980,6 +1205,19 @@ function Board({ boardId, apiRef, tool: toolId, onToolChange, onOpenRecord, onSe
             ? { label: notes.length > 1 ? `Yellow notes (${notes.length})` : "Yellow note", icon: <StickyNote size={14} color="#ffd60a" />, onSelect: () => runCommand(setCardColor(session.context, notePlaces, null)) }
             : { label: notes.length > 1 ? `Gray out (${notes.length})` : "Gray out", icon: <StickyNote size={14} color={NOTE_GRAY} />, onSelect: () => runCommand(setCardColor(session.context, notePlaces, NOTE_GRAY)) },
         );
+      }
+      // Scribbles: the ink color (the theme ink, or a pen color).
+      const scribbles = cards.filter((node) => node.data.node.kind === "stamp" && node.data.node.placeId !== null);
+      if (!readOnly && scribbles.length > 0) {
+        const scribblePlaces = scribbles.map((node) => node.data.node.placeId!);
+        entries.push({
+          kind: "choices",
+          label: "Scribble color",
+          choices: [{ id: "ink", text: "Ink", tip: "Black or white, as the theme" }, ...SCRIBBLE_COLORS.map((entry) => ({ id: entry.color, text: "●", tip: entry.label, color: entry.color }))],
+          current: scribbles.every((node) => node.data.node.color === scribbles[0]!.data.node.color) ? (scribbles[0]!.data.node.color ?? "ink") : "",
+          onSelect: (id: string) => runCommand(setCardColor(session.context, scribblePlaces, id === "ink" ? null : id)),
+        });
+        entries.push({ kind: "separator" });
       }
       const todos = cards.filter((node) => node.data.node.kind === "item" && node.data.node.view === "todo");
       if (!readOnly && todos.length > 0) {
@@ -1028,6 +1266,25 @@ function Board({ boardId, apiRef, tool: toolId, onToolChange, onOpenRecord, onSe
             );
           }
         }
+      } else if (single?.kind === "item" && isGroupShape(single)) {
+        // A group card: its name, and its look (only the outline, or filled with its color).
+        if (!readOnly) {
+          const nodeId = cards[0]!.id;
+          const placeId = single.placeId;
+          entries.push({ label: "Rename", icon: <PenLine size={14} />, onSelect: () => setEditing({ nodeId, edit: "title" }) });
+          if (placeId !== null) {
+            entries.push({
+              kind: "choices",
+              label: "Look",
+              choices: [
+                { id: "outline", text: "Outline only", tip: "Only the outline of the group shows" },
+                { id: "filled", text: "Filled", tip: "The color of the group fills its area" },
+              ],
+              current: single.filled ? "filled" : "outline",
+              onSelect: (id) => runCommand(setGroupFilled(session.context, placeId, id === "filled")),
+            });
+          }
+        }
       } else if (single?.kind === "item" && !isNote(single) && !single.isBoard) {
         entries.push({ label: "Edit text", icon: <PenLine size={14} />, onSelect: () => actions.openText(single.recordId) });
       }
@@ -1050,6 +1307,9 @@ function Board({ boardId, apiRef, tool: toolId, onToolChange, onOpenRecord, onSe
       if (single?.isReference === true) {
         const home = session.graph.homeOf(single.recordId);
         entries.push({ label: "Open home board", icon: <Home size={14} />, disabled: home === undefined, onSelect: () => home !== undefined && actions.openBoard(home.from, single.recordId) });
+      }
+      if (single !== null && single.kind === "item" && session.store.has("items", single.recordId)) {
+        entries.push({ label: "Send to link bench", icon: <Link2 size={14} />, onSelect: () => sendToBench({ itemId: single.recordId }) });
       }
       if (!readOnly && placeIds.length > 0) {
         entries.push({
@@ -1138,22 +1398,42 @@ function Board({ boardId, apiRef, tool: toolId, onToolChange, onOpenRecord, onSe
         return;
       }
       if (readOnly) return;
+      // Group tools: a rectangle or an ellipse from corner to corner, or a free shape. A click (no drag) makes a
+      // rectangle or ellipse of the default size there.
+      if (tool.createsShape !== undefined) {
+        const shape = tool.createsShape;
+        const blob = shape === "blob" ? blobFromPoints(points) : null;
+        if (shape === "blob" && blob === null) return;
+        const start = points[0];
+        if (start === undefined) return;
+        const box = blob?.box ?? boxFromDrag(points) ?? { x: Math.round(start.x), y: Math.round(start.y), w: DEFAULT_SIZE.group.w, h: DEFAULT_SIZE.group.h };
+        const { command, placeId } = createGroupShape(session.context, { boardId, box, shape, shapePath: blob?.path });
+        if (runCommand(command)) {
+          pendingSelection.current = new Set([placeId]);
+          // A new group opens its name for typing.
+          setEditing({ nodeId: placeId, edit: "title" });
+        }
+        if (!sticky) onToolChange("select");
+        return;
+      }
       if (tool.overlay === "scribble") {
         const board = strokeToStamp(points);
         if (board === null) return;
         // A stroke that starts and ends in a card that is not a board goes into that card (a note holds it).
-        const host = model.nodes.find((node) => node.kind === "item" && !node.isBoard && !node.isReference && containsPoint(node, points[0]!) && containsPoint(node, points.at(-1)!));
+        const host = model.nodes.find((node) => node.kind === "item" && !node.isBoard && !node.isReference && !isGroupShape(node) && containsPoint(node, points[0]!) && containsPoint(node, points.at(-1)!));
         const holder = host === undefined ? boardId : host.recordId;
         const shape = host === undefined ? board : { ...board, x: cleanNumber(board.x - host.x), y: cleanNumber(board.y - host.y) };
         // All strokes of one scribble session (in the same holder) go into one scribble.
         const target = scribbleTarget.current;
         const targetPlace = target === null ? undefined : session.store.get("links", target);
-        if (targetPlace?.kind === "place" && targetPlace.from === holder) {
+        const ink = settings.scribbleColor;
+        // A new pen color starts a new scribble (one scribble has one color).
+        if (targetPlace?.kind === "place" && targetPlace.from === holder && (targetPlace.color ?? null) === ink) {
           const stroke = strokeOnBoard(shape);
           if (stroke !== null) runCommand(joinStamps(session.context, [targetPlace.id], stroke));
           return;
         }
-        const { command, placeId } = createStampOnBoard(session.context, { boardId: holder, ...shape });
+        const { command, placeId } = createStampOnBoard(session.context, { boardId: holder, ...shape, color: ink });
         if (runCommand(command)) scribbleTarget.current = placeId;
         return;
       }
@@ -1181,7 +1461,7 @@ function Board({ boardId, apiRef, tool: toolId, onToolChange, onOpenRecord, onSe
         if (hits.size > 0) runCommand(eraseStrokes(session.context, hits));
       }
     },
-    [tool, nodes, onToolChange, readOnly, runCommand, session, boardId, flow, model, sticky],
+    [tool, nodes, onToolChange, readOnly, runCommand, session, boardId, flow, model, sticky, settings.scribbleColor],
   );
 
   return (
@@ -1197,6 +1477,7 @@ function Board({ boardId, apiRef, tool: toolId, onToolChange, onOpenRecord, onSe
           edgeTypes={EDGE_TYPES}
           onNodesChange={(changes) => setNodes((current) => applyNodeChanges(withSpanParts(changes, current), current))}
           onEdgesChange={(changes) => setEdges((current) => applyEdgeChanges(changes, current))}
+          onNodeDragStart={onNodeDragStart}
           onNodeDrag={onNodeDrag}
           onNodeDragStop={onNodeDragStop}
           onNodeDoubleClick={onNodeDoubleClick}
@@ -1244,6 +1525,7 @@ function Board({ boardId, apiRef, tool: toolId, onToolChange, onOpenRecord, onSe
             }}
           />
         )}
+        {copyNotice !== null && !linkMode && <div className="board-hint">{copyNotice}</div>}
         {linkMode && (
           <div className="board-hint">
             {linkSourceId === null
@@ -1263,6 +1545,9 @@ function Board({ boardId, apiRef, tool: toolId, onToolChange, onOpenRecord, onSe
     </BoardCallbacksContext.Provider>
   );
 }
+
+/** The copied cards (⌘C), for ⌘V on any board. In memory only, while the app is open. */
+let copiedCards: { cards: CopiedCard[]; pastes: number } | null = null;
 
 /** The node ID of the first week row of a calendar card ("<place ID>~<n>" → "<place ID>"). */
 function spanBase(nodeId: string): string {
@@ -1342,10 +1627,12 @@ function toFlowNodes(
     draggable: node.kind !== "stub" && !node.pinned && !readOnly && editing?.nodeId !== node.id,
     selectable: node.kind !== "stub",
     // An opened card in a full calendar day lies over its neighbors.
-    zIndex: node.kind === "outline" || node.kind === "calendar" ? -1 : node.calendarPopped ? 20 : undefined,
+    // A group card (a loose area) lies behind all: behind outline and calendar frames too.
+    zIndex: isGroupShape(node) ? -2 : node.kind === "outline" || node.kind === "calendar" ? -1 : node.calendarPopped ? 20 : undefined,
     // "nopan": a mouse press on a stub must not start a board pan. Then the click reaches the stub.
     // A card that is being edited does not pan either: a drag in it selects text.
-    className: node.kind === "stub" || editing?.nodeId === node.id ? "nopan" : undefined,
+    // A group card takes the pointer only at its edge and name (the node box lets clicks through to the board).
+    className: [node.kind === "stub" || editing?.nodeId === node.id ? "nopan" : "", isGroupShape(node) ? "group-shape-node" : ""].filter(Boolean).join(" ") || undefined,
     data: {
       node,
       linkMode: link.linkMode,
@@ -1441,4 +1728,9 @@ function firstEdit(view: ViewStyle): InlineEdit {
 /** Where the cards of a calendar go when they leave it: in a column at its right side. */
 function calendarExitPositions(frame: BoardNode, placeIds: readonly Id[]): Map<Id, { x: number; y: number }> {
   return new Map(placeIds.map((placeId, index) => [placeId, { x: roundBoard(frame.x + frame.w + 40), y: roundBoard(frame.y + index * (COLLAPSED_HEIGHT + 12)) }]));
+}
+
+/** True for a group card (a loose area of the board, view "group"). */
+export function isGroupShape(node: BoardNode): boolean {
+  return node.kind === "item" && node.view === "group" && !node.isBoard;
 }

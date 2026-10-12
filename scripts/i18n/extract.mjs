@@ -274,6 +274,8 @@ function sourceFiles() {
  * progress, errors). Tests (after #[cfg(test)]) do not count.
  */
 const RUST_SOURCES = ["src-tauri/src", "plugins/chinese/src", "plugins/translate/src", "plugins/voice/src", "plugins/web/src"];
+/** JavaScript plugins (names, options, errors). */
+const PLUGIN_JS_SOURCES = ["plugins/math/src"];
 
 /** The UI texts of a Rust file: prose string literals. Format places ("{}", "{name}", "{:?}") become "{0}", "{1}", …. */
 export function extractRust(path, source) {
@@ -323,6 +325,12 @@ export function extractAll() {
     const result = extractFile(file, readFileSync(join(ROOT, file), "utf8"));
     for (const entry of result.found) if (!keys.has(entry.key)) keys.set(entry.key, entry);
     split.push(...result.split);
+  }
+  for (const folder of PLUGIN_JS_SOURCES) {
+    for (const name of readdirSync(join(ROOT, folder)).filter((entry) => entry.endsWith(".mjs")).sort()) {
+      const file = `${folder}/${name}`;
+      for (const entry of extractFile(file, readFileSync(join(ROOT, file), "utf8")).found) if (!keys.has(entry.key)) keys.set(entry.key, entry);
+    }
   }
   for (const file of rustFiles()) {
     for (const entry of extractRust(file, readFileSync(join(ROOT, file), "utf8"))) if (!keys.has(entry.key)) keys.set(entry.key, entry);

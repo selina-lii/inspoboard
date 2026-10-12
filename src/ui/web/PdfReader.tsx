@@ -12,11 +12,14 @@ import { nanoid } from "nanoid";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { COLUMN, firstTop, pageParagraphs, TranslationColumn, useColumnWidth, usePageTranslation } from "./pageTranslation";
 import { pageCounterpart } from "../plugins/sentencePairs";
-import { useSessionState } from "../app/sessionContext";
+import { useSession, useSessionState } from "../app/sessionContext";
+import { reportPassage } from "../app/passages";
+import { ReaderLinks, useLinkMarks } from "./linkMarks";
 import { usePlugins } from "../plugins/pluginsContext";
-import { useSpeech, useSpokenSentence, WEB_SOURCE } from "../plugins/speech";
-import { placeHighlight, type NoteColor } from "./savedPages";
-import { boxesOf, clampZoom, FindBar, marginOf, ReaderSheet, ReaderTools, usePageFind, useReaderKeys, useReaderNotes, type Box, type Mark, type PageFind, type ReaderMode, type SheetApi } from "./readerShared";
+import { useSpeech, useSpokenSentence, WEB_SOURCE, type ReadMode } from "../plugins/speech";
+import { findQuote, placeHighlight, type NoteColor } from "./savedPages";
+import type { TextAnchor } from "../app/smallTool";
+import { boxesOf, clampZoom, readyMarkOf, FindBar, marginOf, ReaderSheet, ReaderTools, usePageFind, useReaderKeys, useReaderNotes, type Box, type Mark, type PageFind, type ReaderMode, type SheetApi } from "./readerShared";
 import { indexPdfText, offsetAt, rangeOf, type TextIndex } from "./webText";
 import { useWebPages, type PdfPage } from "./WebPages";
 
@@ -28,7 +31,8 @@ const PAGE_GAP = 14;
 type Props = { page: PdfPage; onClose(): void; onSaveAgain?: () => void };
 
 export function PdfReader({ page, onClose, onSaveAgain }: Props) {
-  const { readOnly } = useSessionState();
+  const { readOnly, settings } = useSessionState();
+  const session = useSession();
   const speech = useSpeech();
   const plugins = usePlugins();
   const sheet = useRef<SheetApi | null>(null);
@@ -40,10 +44,10 @@ export function PdfReader({ page, onClose, onSaveAgain }: Props) {
   const [ready, setReady] = useState(0);
   /** The size of all pages at scale 1. */
   const [size, setSize] = useState({ w: 0, h: 0 });
-  const [textSides, setTextSides] = useState<{ left: number; right: number } | null>(null);
+  const [, setTextSides] = useState<{ left: number; right: number } | null>(null);
   const [title, setTitle] = useState(page.title);
   const [failure, setFailure] = useState<string | null>(null);
-  const [mode, setModeNow] = useState<ReaderMode>("read");
+  const [mode, setModeNow] = useState<ReaderMode>("select");
   // The comment and note tools make one item per click, as the board tools. A double-click keeps them on.
   const [modeSticky, setModeSticky] = useState(false);
   const setMode = useCallback((next: ReaderMode, keep = false) => {
@@ -51,7 +55,9 @@ export function PdfReader({ page, onClose, onSaveAgain }: Props) {
     setModeSticky(keep);
   }, []);
   const [color, setColor] = useState<NoteColor>("yellow");
-  const { notes, notesRef, change, step, problem } = useReaderNotes(page.key);
+  const { notes, notesRef, change, step, problem } = useReaderNotes(page.key, page.notesFrom);
+  /** The selected text of the PDF (its place in the PDF text), for a new small item that points to it. */
+  const selectedText = useRef<TextAnchor | null>(null);
   const sourceId = WEB_SOURCE + page.key;
   const spoken = useSpokenSentence(sourceId);
   const speaker = plugins.plugins.find((plugin) => plugin.details !== null && plugin.capabilities.includes("speak-text")) ?? null;
@@ -64,16 +70,22 @@ export function PdfReader({ page, onClose, onSaveAgain }: Props) {
   // The sentence of the translation that matches the sentence read aloud.
   const spokenPair = spoken === null || translation.texts === null ? null : pageCounterpart(paragraphs, translation.texts, spoken.sentence.start);
   const shownZoom = zoom ?? 1;
-  const margin = marginOf(notes.margin, size.w, textSides);
+  const margin = marginOf(size.w);
   const zoomRef = useRef(shownZoom);
   zoomRef.current = shownZoom;
   const live = useRef({ speech, speaker });
   live.current = { speech, speaker };
 
   const fitZoom = useCallback(
-    () => clampZoom(((sheet.current?.viewWidth() ?? 900) - 48) / Math.max(1, size.w + 2 * margin + columnWidth)),
-    [size.w, margin, columnWidth],
+    () => clampZoom(((sheet.current?.viewWidth() ?? 900) - 48) / Math.max(1, size.w + columnWidth)),
+    [size.w, columnWidth],
   );
+  /** Fits the page (and the translation column) to the width, and scrolls to the page (the margins are at its sides). */
+  const [fitCount, setFitCount] = useState(0);
+  const fitPage = useCallback(() => {
+    setZoom(fitZoom());
+    setFitCount((count) => count + 1);
+  }, [fitZoom]);
 
   // The document, and the size of its pages at scale 1.
   const [doc, setDoc] = useState<pdfjs.PDFDocumentProxy | null>(null);
@@ -116,8 +128,8 @@ export function PdfReader({ page, onClose, onSaveAgain }: Props) {
 
   // The first zoom fits the width. Later, the pages draw again at the zoom after a short pause.
   useEffect(() => {
-    if (zoom === null && size.w > 0) setZoom(fitZoom());
-  }, [zoom, size.w, fitZoom]);
+    if (zoom === null && size.w > 0) fitPage();
+  }, [zoom, size.w, fitPage]);
   useEffect(() => {
     if (zoom === null) return;
     const timer = window.setTimeout(() => setRenderScale(zoom), renderScale === null ? 0 : 250);
@@ -195,16 +207,17 @@ export function PdfReader({ page, onClose, onSaveAgain }: Props) {
   // Find in page (⌘F): the hook needs the mark boxes (below), the keys need it here.
   const findRef = useRef<PageFind | null>(null);
   useReaderKeys({
+    mode,
     find: () => findRef.current?.show(),
     step,
     zoomBy: (factor) => setZoom((value) => clampZoom((value ?? 1) * factor)),
-    fit: () => setZoom(fitZoom()),
+    fit: () => fitPage(),
     setMode,
   });
 
   const [notice, setNotice] = useState<string | null>(null);
   const readFrom = useCallback(
-    (offset: number) => {
+    (offset: number, until?: number) => {
       const { speech: reader, speaker: plugin } = live.current;
       const text = index.current?.text ?? "";
       if (reader === null || plugin === null) {
@@ -216,19 +229,30 @@ export function PdfReader({ page, onClose, onSaveAgain }: Props) {
         return;
       }
       setNotice(null);
-      if (reader.state?.sourceId === sourceId && !reader.state.preparing) reader.seekToOffset(offset);
-      else void reader.readText(plugin.name, sourceId, text, offset);
+      if (until === undefined && reader.state?.sourceId === sourceId && !reader.state.preparing && reader.state.until === undefined) reader.seekToOffset(offset);
+      else void reader.readText(plugin.name, sourceId, text, offset, undefined, until);
     },
     [sourceId],
   );
 
   const web = useWebPages();
-  const readFromSelection = useCallback(() => {
+  /** The selected text of the PDF: its range in the PDF text, or null. */
+  const selectedRange = useCallback((): { start: number; end: number } | null => {
     const selection = window.getSelection();
     const range = selection !== null && selection.rangeCount > 0 && !selection.isCollapsed ? selection.getRangeAt(0) : null;
-    const inside = range !== null && pages.current?.contains(range.startContainer) === true;
-    readFrom(inside && index.current !== null ? (offsetAt(index.current, range.startContainer, range.startOffset) ?? 0) : 0);
-  }, [readFrom]);
+    if (range === null || pages.current?.contains(range.startContainer) !== true || index.current === null) return null;
+    const start = offsetAt(index.current, range.startContainer, range.startOffset);
+    const end = offsetAt(index.current, range.endContainer, range.endOffset);
+    return start === null || end === null || end <= start ? null : { start, end };
+  }, []);
+  /** "Read aloud" in the plugin menu: from the start, the selected text only, or from the selected text on. */
+  const read = useCallback(
+    (mode: ReadMode) => {
+      const range = mode === "start" ? null : selectedRange();
+      readFrom(range?.start ?? 0, mode === "selection" ? range?.end : undefined);
+    },
+    [readFrom, selectedRange],
+  );
   useEffect(() => {
     if (web === null) return;
     const textToRead = () => {
@@ -239,18 +263,18 @@ export function PdfReader({ page, onClose, onSaveAgain }: Props) {
       const offset = inside && index.current !== null ? offsetAt(index.current, range.startContainer, range.startOffset) : null;
       return { text: offset === null ? text : text.slice(offset), fromSelection: offset !== null };
     };
-    const api = { readFromSelection, textToRead, translate: (plugin: string) => void translation.run(plugin), hideTranslation: translation.hide, translated: translation.shown };
+    const api = { read, hasSelection: () => selectedRange() !== null, textToRead, translate: (plugin: string) => void translation.run(plugin), hideTranslation: translation.hide, translated: translation.shown };
     web.reader.current = api;
     return () => {
       if (web.reader.current === api) web.reader.current = null;
     };
-  }, [web, readFromSelection, translation]);
+  }, [web, read, selectedRange, translation]);
   // The column shows or goes: fit the width again.
   const hadColumn = useRef(columnWidth > 0);
   useEffect(() => {
     if (hadColumn.current === columnWidth > 0) return;
     hadColumn.current = columnWidth > 0;
-    setZoom(fitZoom());
+    fitPage();
   }, [columnWidth, fitZoom]);
 
   const autoRead = useRef(page.autoRead === true);
@@ -291,18 +315,49 @@ export function PdfReader({ page, onClose, onSaveAgain }: Props) {
     if (ready && page.find !== undefined && page.find !== "") find.show(page.find);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, page]);
-  const marks = [...highlightMarks, ...(spokenMark === null ? [] : [spokenMark]), ...find.marks];
+  const linkMarks = useLinkMarks(page.itemId, pageText, boxes, ready);
+  // The "ready" cursor of read aloud (where the ready audio ends), if the setting shows it.
+  const readyMark = readyMarkOf(useSpeech()?.state, sourceId, settings.speechShowReady, boxes);
+  const marks = [...highlightMarks, ...linkMarks.marks, ...(spokenMark === null ? [] : [spokenMark]), ...(readyMark === null ? [] : [readyMark]), ...find.marks];
 
   const onClick = (event: React.MouseEvent) => {
-    if (mode !== "read") return;
+    // ⌘-click on a linked passage (dotted line): go to the other end of its link.
+    if ((event.metaKey || event.ctrlKey) && index.current !== null) {
+      const at = document.caretRangeFromPoint(event.clientX, event.clientY);
+      const offset = at === null ? null : offsetAt(index.current, at.startContainer, at.startOffset);
+      if (offset !== null && linkMarks.follow(offset)) {
+        event.preventDefault();
+        return;
+      }
+    }
+    if (mode !== "select") return;
     const selection = window.getSelection();
     if (selection !== null && !selection.isCollapsed) return;
     const caret = document.caretRangeFromPoint(event.clientX, event.clientY);
     const offset = caret === null || index.current === null ? null : offsetAt(index.current, caret.startContainer, caret.startOffset);
-    if (offset !== null) readFrom(offset);
+    // Only while it reads this PDF (Read aloud started it): the click moves the reading there. Else a click does not read.
+    if (offset !== null && speech?.state?.sourceId === sourceId && !speech.state.preparing) speech.clickSeek(offset);
+  };
+
+  /** The link bench can take the selected passage (its text in the PDF text, as the marks find it again). */
+  const reportPdfPassage = () => {
+    const pageItem: string | undefined = page.itemId;
+    if (pageItem === undefined || index.current === null) return;
+    const selection = window.getSelection();
+    const range = selection !== null && selection.rangeCount > 0 && !selection.isCollapsed ? selection.getRangeAt(0) : null;
+    if (range === null || pages.current?.contains(range.startContainer) !== true) {
+      selectedText.current = null;
+      reportPassage(null, pageItem);
+      return;
+    }
+    const start = offsetAt(index.current, range.startContainer, range.startOffset);
+    const end = offsetAt(index.current, range.endContainer, range.endOffset);
+    selectedText.current = start !== null && end !== null && end > start ? { text: index.current.text.slice(start, end), at: start } : null;
+    if (start !== null && end !== null && end > start) reportPassage({ itemId: pageItem, quote: index.current.text.slice(start, end) });
   };
 
   const onMouseUp = () => {
+    reportPdfPassage();
     if (mode !== "highlight" || readOnly || index.current === null) return;
     const selection = window.getSelection();
     if (selection === null || selection.isCollapsed || selection.rangeCount === 0) return;
@@ -319,28 +374,31 @@ export function PdfReader({ page, onClose, onSaveAgain }: Props) {
     <div className="web-reader pdf-reader">
       <FindBar find={find} />
       <ReaderTools
+        selection={() => selectedText.current}
         title={title}
         url={page.url}
         mode={mode}
         color={color}
         readOnly={readOnly}
-        canRead={speaker !== null && ready > 0}
         zoom={shownZoom}
-        margin={notes.margin}
-        shownMargin={margin}
         onMode={setMode}
         sticky={modeSticky}
         onColor={setColor}
         onClose={onClose}
         onStep={step}
-        onReadFromStart={() => readFrom(0)}
         onZoom={(value) => setZoom(clampZoom(value))}
-        onFit={() => setZoom(fitZoom())}
-        onMargin={(value) => change({ ...notesRef.current, margin: value })}
+        onFit={() => fitPage()}
         onSaveAgain={onSaveAgain}
+        extra={<ReaderLinks itemId={page.itemId} />}
       />
       {(problem ?? failure ?? notice) !== null && <div className="plugin-error web-reader-problem">{problem ?? failure ?? notice}</div>}
       <ReaderSheet
+        homeId={page.itemId}
+        fitKey={fitCount}
+        anchorBox={(quote, at) => {
+          const found = index.current === null ? null : findQuote(index.current.text, quote, at ?? 0);
+          return found === null ? null : (boxes(found.start, found.end).at(-1) ?? null);
+        }}
         className="pdf-scroller"
         pageWidth={size.w}
         pageHeight={size.h}
@@ -384,7 +442,7 @@ export function PdfReader({ page, onClose, onSaveAgain }: Props) {
       >
         <div
           ref={pages}
-          className="pdf-pages"
+          className={`pdf-pages${settings.readerInvert ? " inverted" : ""}`}
           style={{ transform: renderScale === null || renderScale === shownZoom ? undefined : `scale(${shownZoom / renderScale})` }}
           onClick={onClick}
           onMouseUp={onMouseUp}

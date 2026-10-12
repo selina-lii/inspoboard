@@ -1,6 +1,6 @@
 // Read-aloud controls above the board: play, pause, sentence steps, speed, volume. In subtitle mode, a large subtitle.
 
-import { LoaderCircle, Pause, Play, SkipBack, SkipForward, Square, Volume2, X } from "lucide-react";
+import { Gauge, LoaderCircle, LocateFixed, Lock, LockOpen, Pause, Play, SkipBack, SkipForward, Square, Volume2, X } from "lucide-react";
 import { useEffect, useRef, type ReactNode } from "react";
 import { SPEECH_RATE_RANGE } from "../../io/settings";
 import { useSessionState } from "../app/sessionContext";
@@ -8,7 +8,7 @@ import { useSpeech } from "./speech";
 import { formatListenTime, listenSeconds } from "./listenTime";
 import { usePluginHost, usePlugins } from "./pluginsContext";
 import { useSession } from "../app/sessionContext";
-import { WEB_SOURCE, type SpeechState } from "./speech";
+import { onShowSpoken, showSpoken, WEB_SOURCE, type SpeechState } from "./speech";
 import { cachedPageTexts, pageParagraphs } from "../web/pageTranslation";
 import { pageCounterpart, textCounterpart } from "./sentencePairs";
 import type { OverlayMap } from "./overlay";
@@ -57,21 +57,40 @@ export function SpeechBar() {
           </span>
         ) : (
           <>
-            <button className="icon-button small" data-tip="Previous sentence" onClick={() => speech.step(-1)}>
-              <SkipBack size={14} />
+            <button
+              className={`icon-button small${settings.speechLock ? " active" : ""}`}
+              data-tip={settings.speechLock ? "Locked: a click on the text does not move the reading (click to unlock)" : "Lock: a click on the text does not move the reading"}
+              aria-pressed={settings.speechLock}
+              onClick={() => speech.setLock(!settings.speechLock)}
+            >
+              {settings.speechLock ? <Lock size={14} /> : <LockOpen size={14} />}
             </button>
-            <button className="icon-button" data-tip={state.loading === true ? "Getting the voice ready…" : state.playing ? "Pause" : "Play"} onClick={() => (state.playing ? speech.pause() : speech.resume())}>
-              {state.loading === true && state.playing ? <LoaderCircle size={16} className="spin" /> : state.playing ? <Pause size={16} /> : <Play size={16} />}
+            <button className="icon-button small" data-tip="Show the text that is read now" onClick={() => showSpoken(state.sourceId)}>
+              <LocateFixed size={14} />
             </button>
-            <button className="icon-button small" data-tip="Next sentence" onClick={() => speech.step(1)}>
-              <SkipForward size={14} />
+            <button
+              className={`icon-button small${settings.speechShowReady ? " active" : ""}`}
+              data-tip={settings.speechShowReady ? "Ready cursor: on (a bar where the ready audio ends; click to hide it)" : "Ready cursor: show where the ready audio ends (reading stops for a moment when it reaches the bar)"}
+              aria-pressed={settings.speechShowReady}
+              onClick={() => void session.updateSettings({ speechShowReady: !settings.speechShowReady })}
+            >
+              <Gauge size={14} />
             </button>
-            <span className="speech-count muted" data-tip="← → previous and next sentence · ⌘, ⌥, or Ctrl + ← → speed">
+            <span className="speech-count muted" data-tip="Space pause and play · ← → previous and next sentence · ⌘, ⌥, or Ctrl + ← → speed">
               {state.current + 1} / {state.sentences.length}
             </span>
             <span className="speech-left muted" data-tip="Time left, about">
               {`${formatListenTime(listenSeconds(state.sentences.slice(state.current).map((sentence) => sentence.speech).join(" "), settings.speechRate)).replace("about ", "")} left`}
             </span>
+            <button className="icon-button small" data-tip="Previous sentence" onClick={() => speech.step(-1)}>
+              <SkipBack size={14} />
+            </button>
+            <button className="icon-button" data-tip={state.loading === true ? "Getting the voice ready…" : state.playing ? "Pause (Space)" : "Play (Space)"} onClick={() => (state.playing ? speech.pause() : speech.resume())}>
+              {state.loading === true && state.playing ? <LoaderCircle size={16} className="spin" /> : state.playing ? <Pause size={16} /> : <Play size={16} />}
+            </button>
+            <button className="icon-button small" data-tip="Next sentence" onClick={() => speech.step(1)}>
+              <SkipForward size={14} />
+            </button>
             <label className="speech-slider" data-tip="Speed">
               <span>{settings.speechRate.toFixed(2)}×</span>
               <input
@@ -105,7 +124,13 @@ export function SpokenText({ text, sentence }: { text: string; sentence: Sentenc
   const speech = useSpeech();
   const mark = useRef<HTMLElement>(null);
   useEffect(() => mark.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }), [sentence.start]);
+  // "Show the text that is read now" (the read-aloud bar): the sentence goes to the middle of the view.
+  useEffect(() => onShowSpoken(() => mark.current?.scrollIntoView({ block: "center", behavior: "smooth" })), []);
   const sentences = speech?.state?.sentences ?? [sentence];
+  const { settings } = useSessionState();
+  // The "ready" cursor: after the last sentence whose audio is ready (only while it is ahead of the current one).
+  const readyEnd = speech?.state?.readyEnd;
+  const readyLast = settings.speechShowReady && readyEnd !== undefined && readyEnd - 1 > (speech?.state?.current ?? 0) ? readyEnd - 1 : -1;
   const parts: ReactNode[] = [];
   let at = 0;
   sentences.forEach((part, index) => {
@@ -115,11 +140,12 @@ export function SpokenText({ text, sentence }: { text: string; sentence: Sentenc
       current ? (
         <mark key={index} ref={mark}>{text.slice(part.start, part.end)}</mark>
       ) : (
-        <span key={index} className="spoken-sentence" onClick={() => speech?.seekToOffset(part.start)}>
+        <span key={index} className="spoken-sentence" onClick={() => speech?.clickSeek(part.start)}>
           {text.slice(part.start, part.end)}
         </span>
       ),
     );
+    if (index === readyLast) parts.push(<span key={`ready:${index}`} className="ready-cursor" data-tip="The ready audio ends here" />);
     at = part.end;
   });
   parts.push(text.slice(at));

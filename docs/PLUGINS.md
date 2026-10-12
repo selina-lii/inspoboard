@@ -98,6 +98,14 @@ The app reads a note, a page, or a saved web page aloud. It plays one sentence a
 - `speak`: params `{"text": "<speech of one sentence>", "options": {...}}`. Reply `{"audio": "<base64>", "mime": "audio/wav"}`. The mime type must start with `audio/`.
 - `export`: params `{"text", "speeches", "options", "path", "rate", "volume"}`. `speeches` (optional) are the words to say, one for each sentence, after the skip rules of the app. Without it, the plugin splits `text`. The plugin writes one audio file. It can change the extension of `path` to its audio format. Reply `{"path": "<final path>"}`. Send progress notes.
 
+### `math` (capability `math-text`)
+
+Read aloud says formulas as words with this plugin (for example "a over b"). The app finds the formulas: in a note or a page, LaTeX between `$…$`, `$$…$$`, `\(…\)`, `\[…\]`, or in a code block with the language `math`; in a saved web page, MathML (with its LaTeX source, if the page has it).
+
+- Params: `{"formulas": [{"tex": "\\frac{a}{b}", "display": false}, {"mathml": "<math>…</math>", "display": true}], "options": {...}}`. Each formula has `tex` or `mathml`.
+- Reply: `{"texts": ["a over b", "…"]}`: one string for each formula, in the same order. An empty string if the plugin cannot read a formula: the app then says its LaTeX.
+- The plugin gets no toolbar button. Its options show in the Read aloud menu.
+
 ### `save_page` (capability `save-page`)
 
 - Params: `{"url": "https://…"}`. Reply: `{"kind": "html", "title", "url", "html"}`, or for a PDF `{"kind": "pdf", "title", "url", "data": "<base64>"}`. `url` is the address after redirects.

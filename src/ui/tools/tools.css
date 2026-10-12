@@ -11,4 +11,12 @@
 .draw-overlay.lasso path { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 4 4; fill: var(--accent-soft); }
 .draw-overlay.scribble path { stroke: var(--text); stroke-width: 2; }
 .draw-overlay.erase { cursor: cell; }
+.draw-overlay.rect, .draw-overlay.ellipse, .draw-overlay.area { cursor: crosshair; }
+.draw-overlay rect, .draw-overlay ellipse, .draw-overlay.area path { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 6 4; fill: var(--accent-soft); }
 .draw-overlay.erase path { stroke: var(--danger); stroke-width: 10; stroke-opacity: 0.35; }
+
+/* Scribble ink colors (while the scribble tool is on). */
+.pen-colors { display: inline-flex; align-items: center; gap: 5px; margin: 0 6px; }
+.pen-color { width: 16px; height: 16px; padding: 0; border-radius: 50%; border: 2px solid transparent; cursor: pointer; box-shadow: 0 0 0 1px var(--border); }
+.pen-color.ink { background: var(--text); }
+.pen-color.active { border-color: var(--bg); box-shadow: 0 0 0 2px var(--accent); }

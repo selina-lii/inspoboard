@@ -30,7 +30,18 @@
 .dialog-list .path { color: var(--text-faint); white-space: nowrap; }
 .dialog-list .tag { font-size: 11px; color: var(--text-faint); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; margin-right: 4px; }
 .dialog-list mark { background: var(--accent-soft); color: var(--text); border-radius: 2px; }
-.dialog.settings { width: min(440px, 90vw); padding-bottom: 8px; max-height: 80vh; overflow-y: auto; }
+.dialog.settings { width: min(640px, 94vw); padding-bottom: 0; }
+.settings-body { display: grid; grid-template-columns: 168px 1fr; height: min(460px, 72vh); }
+.settings-tabs { display: flex; flex-direction: column; gap: 2px; padding: 8px; border-right: 1px solid var(--border); overflow-y: auto; }
+.settings-tabs button { text-align: left; border: 0; background: none; color: var(--text-muted); padding: 6px 10px; border-radius: 6px; font: inherit; cursor: pointer; }
+.settings-tabs button:hover { background: var(--hover, rgba(127, 127, 127, 0.12)); color: var(--text); }
+.settings-tabs button.active { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--text); font-weight: 600; }
+.settings-section { overflow-y: auto; padding-bottom: 8px; min-width: 0; }
+.setting.setting-block { display: block; cursor: default; }
+@media (max-width: 520px) {
+  .settings-body { grid-template-columns: 1fr; height: auto; max-height: 76vh; }
+  .settings-tabs { flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--border); }
+}
 .setting { display: flex; gap: 10px; align-items: flex-start; padding: 10px 14px; cursor: pointer; }
 .setting input { margin-top: 3px; accent-color: var(--accent); }
 .setting-help { display: block; color: var(--text-muted); font-size: 12px; margin-top: 2px; }

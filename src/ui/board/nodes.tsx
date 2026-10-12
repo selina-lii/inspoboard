@@ -30,7 +30,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { gridDays, monthTitle, WEEKDAYS, CALENDAR } from "../../core/groups";
-import { createContext, useContext, useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type KeyboardEvent, type SVGProps } from "react";
 import { cleanNumber, roundBoard } from "../../core/stamps";
 import { DEFAULT_SIZE } from "../../core/actions";
 import { isComposing } from "../app/keys";
@@ -53,6 +53,8 @@ export function hasBoard(node: BoardNode): boolean {
 export function isCollapsed(node: BoardNode): boolean {
   if (node.kind === "stamp" || node.kind === "stub" || node.kind === "outline" || node.kind === "calendar") return false;
   if (node.view === "text" && !hasBoard(node)) return false;
+  // A group card is an area: it never folds to its name.
+  if (node.view === "group" && !hasBoard(node)) return false;
   return !node.expanded;
 }
 
@@ -179,12 +181,36 @@ function Resizer({ node, selected }: { node: BoardNode; selected: boolean }) {
  * A click elsewhere keeps the field open. If the card goes away (for example, the user
  * opens a different board), the draft is saved, so that no typed text is lost.
  */
+/**
+ * Puts the focus in a new text field. React Flow hides a card until it has measured it (a quote, a link object:
+ * no fixed height), and a hidden field cannot take the focus. Then the edit never ended. Thus: try again on each frame.
+ */
+function useFocusWhenShown(field: { current: HTMLInputElement | HTMLTextAreaElement | null }, onFocus?: (element: HTMLInputElement | HTMLTextAreaElement) => void) {
+  useEffect(() => {
+    let frame = 0;
+    let tries = 0;
+    const attempt = () => {
+      const element = field.current;
+      if (element === null) return;
+      element.focus();
+      if (document.activeElement === element) onFocus?.(element);
+      else if (++tries < 60) frame = requestAnimationFrame(attempt);
+    };
+    attempt();
+    return () => cancelAnimationFrame(frame);
+    // Only when the field opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+}
+
 function TitleInput({ node, value, placeholder, onCommit }: { node: BoardNode; value?: string; placeholder?: string; onCommit?: (text: string) => void }) {
   const callbacks = useBoardCallbacks();
   const initial = value ?? node.title;
   const commitText = onCommit ?? ((text: string) => callbacks.onRename(node.recordId, text));
   const [draft, setDraft] = useState(initial);
   const done = useRef(false);
+  const field = useRef<HTMLInputElement>(null);
+  useFocusWhenShown(field);
   const latest = useRef({ draft, initial, commitText });
   latest.current = { draft, initial, commitText };
 
@@ -212,8 +238,8 @@ function TitleInput({ node, value, placeholder, onCommit }: { node: BoardNode; v
   };
   return (
     <input
+      ref={field}
       className="card-title-input nodrag nopan"
-      autoFocus
       dir="auto"
       value={draft}
       placeholder={placeholder ?? "Untitled"}
@@ -236,12 +262,7 @@ function BodyInput({ node }: { node: BoardNode }) {
   const callbacks = useBoardCallbacks();
   const [draft, setDraft] = useState(() => callbacks.bodyOf(node.recordId));
   const area = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => {
-    const element = area.current;
-    if (element === null) return;
-    element.focus();
-    element.setSelectionRange(element.value.length, element.value.length);
-  }, []);
+  useFocusWhenShown(area, (element) => element.setSelectionRange(element.value.length, element.value.length));
   return (
     <textarea
       ref={area}
@@ -297,6 +318,7 @@ export function CardNode({ id, data, selected }: NodeProps<FlowNode>) {
     if (node.view === "todo") return <TodoCard {...common} />;
     if (node.view === "flashcard") return <FlashCard {...common} />;
     if (node.view === "quote") return <QuoteCard {...common} />;
+    if (node.view === "group") return <GroupShapeCard {...common} />;
   }
   if (node.view === "text" && !board) {
     return (
@@ -504,7 +526,7 @@ function WebLinkCard({ node, selected, editing, title, className }: ObjectProps)
   const callbacks = useBoardCallbacks();
   const local = isLocalPath(node.url);
   // A saved page with notes: the card is solid blue, and a double-click opens the saved copy.
-  const annotated = useAnnotated(useSession(), node.url);
+  const annotated = useAnnotated(useSession(), node.recordId, node.url);
   const Icon = local ? FileIcon : Globe;
   if (editing === "title" || editing === "url") {
     return (
@@ -672,8 +694,8 @@ export function quoteStart(text: string): string {
 
 /**
  * A quote: a passage on newsprint paper, framed by quotation marks. The name is its source (it can be empty).
- * Double-click writes the text. The size can change; the height grows with the text.
- * Folded, it is a small gray speech bubble with the first two words.
+ * Double-click writes the text (like a note; the board does it). The size can change; the height grows with the text.
+ * Folded, it is a small gray speech bubble with the first two words. Double-click unfolds it, ready for typing.
  */
 function QuoteCard({ id, node, selected, editing, title, text, className }: ObjectProps) {
   const callbacks = useBoardCallbacks();
@@ -684,7 +706,6 @@ function QuoteCard({ id, node, selected, editing, title, text, className }: Obje
       <div
         className={`${className} quote-bubble`}
         data-tip={text !== "" ? text.slice(0, 200) : undefined}
-        onDoubleClick={(event) => (event.stopPropagation(), node.placeId !== null && callbacks.onToggleExpanded(node.placeId, true))}
       >
         <HiddenHandle />
         <span className="card-text quote-bubble-text" data-item-id={node.recordId} dir="auto">
@@ -697,7 +718,6 @@ function QuoteCard({ id, node, selected, editing, title, text, className }: Obje
     <div
       className={`${className} quote-marks-${node.marks}`}
       style={{ minHeight: node.h }}
-      onDoubleClick={(event) => (event.stopPropagation(), !callbacks.readOnly && callbacks.onStartEdit(id, "body"))}
     >
       <Resizer node={node} selected={selected} />
       <HiddenHandle />
@@ -737,6 +757,52 @@ function QuoteCard({ id, node, selected, editing, title, text, className }: Obje
 }
 
 /** Scribbles that a note holds. They move with the card and the card clips them. */
+/**
+ * A group card: a loose area of the board (rounded rectangle, ellipse, or free shape) with a name at its top left.
+ * Only its edge and its name take the pointer: a click inside the shape goes to the board or to the cards in it.
+ * Drag the name or the edge to move the group with its cards. Double-click the name to rename it.
+ */
+function GroupShapeCard({ id, node, selected, editing, title, className }: ObjectProps) {
+  const callbacks = useBoardCallbacks();
+  const color = node.color ?? "var(--group-shape)";
+  const w = Math.max(node.w, 1);
+  const h = Math.max(node.h, 1);
+  // Outline: a dashed edge only. Filled: the color fills the area, and the edge is solid.
+  const look = node.filled
+    ? { fill: color, fillOpacity: 0.18, stroke: color, strokeOpacity: 0.8, strokeWidth: 1.5 }
+    : { fill: "none", stroke: color, strokeOpacity: 0.85, strokeWidth: 1.75, strokeDasharray: "7 5" };
+  // The visible edge, and a wide clear edge on it that takes the pointer (to move the group).
+  const hit = { fill: "none", stroke: "transparent", strokeWidth: 12, className: "group-shape-hit" };
+  const outline = (props: SVGProps<SVGElement>) =>
+    node.shape === "blob" && node.shapePath !== "" ? (
+      <path d={node.shapePath} vectorEffect="non-scaling-stroke" {...(props as SVGProps<SVGPathElement>)} />
+    ) : node.shape === "ellipse" ? (
+      <ellipse cx={w / 2} cy={h / 2} rx={w / 2 - 1} ry={h / 2 - 1} vectorEffect="non-scaling-stroke" {...(props as SVGProps<SVGEllipseElement>)} />
+    ) : (
+      <rect x={1} y={1} width={w - 2} height={h - 2} rx={18} vectorEffect="non-scaling-stroke" {...(props as SVGProps<SVGRectElement>)} />
+    );
+  return (
+    <div className={`${className} group-shape shape-${node.shape}`}>
+      <Resizer node={node} selected={selected} />
+      <svg className="group-shape-svg" viewBox={`0 0 ${node.shape === "blob" ? 100 : w} ${node.shape === "blob" ? 100 : h}`} preserveAspectRatio="none" aria-hidden>
+        {outline({ ...look, className: "group-shape-edge" })}
+        {outline(hit)}
+      </svg>
+      <HiddenHandle />
+      <div
+        className="group-shape-name"
+        style={node.color === null ? undefined : { color: node.color }}
+        onDoubleClick={(event) => {
+          event.stopPropagation();
+          if (!callbacks.readOnly) callbacks.onStartEdit(id, "title");
+        }}
+      >
+        {editing === "title" ? <TitleInput node={node} placeholder="Group" /> : title !== "" ? <span dir="auto">{title}</span> : <span className="untitled">Group</span>}
+      </div>
+    </div>
+  );
+}
+
 function InnerStamps({ stamps }: { stamps: readonly InnerStamp[] }) {
   if (stamps.length === 0) return null;
   return (
@@ -749,7 +815,7 @@ function InnerStamps({ stamps }: { stamps: readonly InnerStamp[] }) {
           viewBox={`0 0 ${Math.max(stamp.w, 0.1)} ${Math.max(stamp.h, 0.1)}`}
           preserveAspectRatio="none"
         >
-          <path d={stamp.path} vectorEffect="non-scaling-stroke" />
+          <path d={stamp.path} vectorEffect="non-scaling-stroke" style={stamp.color === null ? undefined : { stroke: stamp.color }} />
         </svg>
       ))}
     </div>
@@ -849,7 +915,7 @@ export function StampNode({ data, selected }: NodeProps<FlowNode>) {
       <Resizer node={node} selected={selected} />
       {/* The view box equals the stamp box. Thus each point shows exactly where it was drawn. */}
       <svg viewBox={`0 0 ${stamp.w} ${stamp.h}`} preserveAspectRatio="none" role="img" aria-label={stamp.alt}>
-        <path d={stamp.path} vectorEffect="non-scaling-stroke" />
+        <path d={stamp.path} vectorEffect="non-scaling-stroke" style={node.color === null ? undefined : { stroke: node.color }} />
       </svg>
     </div>
   );
