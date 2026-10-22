@@ -10,6 +10,7 @@
 import { makeOp, type Command, type Op } from "./commands";
 import type { ActionContext } from "./actions";
 import type { GraphIndex } from "./graph";
+import { radialMembers } from "./radial";
 import type { Store } from "./store";
 import type { Id, ListStyle, OutlineDirection, OutlineRecord, PlaceLink } from "./types";
 
@@ -33,8 +34,8 @@ export type OutlineRow = {
 /** The rows of an outline in order: each row, then its child rows. */
 export function outlineRows(store: Store, graph: GraphIndex, outlineId: Id): OutlineRow[] {
   const outline = store.get("outlines", outlineId);
-  // A calendar has days, not rows (groups.ts).
-  if (outline === undefined || outline.type === "calendar") return [];
+  // A calendar has days, a radial has a ball (groups.ts, radial.ts): no rows.
+  if (outline === undefined || outline.type !== undefined) return [];
   const members = graph.membersOf(outlineId).filter((place) => !store.has("stamps", place.to));
   const memberIds = new Set(members.map((place) => place.id));
   const byParent = new Map<Id | null, PlaceLink[]>();
@@ -142,11 +143,13 @@ export function boardOrder(store: Store, graph: GraphIndex, boardId: Id): { plac
   const inOutline = new Set<Id>();
   for (const outline of graph.outlinesOn(boardId)) {
     const rows = outlineRows(store, graph, outline.id);
-    // A calendar: its cards by day.
+    // A calendar: its cards by day. A radial: its cards (in their fixed order).
     const days =
       outline.type === "calendar"
         ? [...graph.membersOf(outline.id)].filter((place) => place.day !== undefined).sort((a, b) => ((a.day ?? "") < (b.day ?? "") ? -1 : (a.day ?? "") > (b.day ?? "") ? 1 : 0)).map((place) => ({ place, row: null }))
-        : [];
+        : outline.type === "radial"
+          ? radialMembers(store, graph, outline.id).map((place) => ({ place, row: null }))
+          : [];
     const entries = [
       ...rows.flatMap((row) => {
         const place = store.get("links", row.placeId);
@@ -226,8 +229,8 @@ export function removeFromOutline(
   for (const outlineId of outlineIds) {
     const outline = context.store.get("outlines", outlineId);
     if (outline === undefined) continue;
-    // A calendar: the cards leave their days. An empty calendar stays (it is a calendar of empty days).
-    if (outline.type === "calendar") {
+    // A calendar or a radial: the cards leave it. An empty one stays (a calendar of empty days, a core alone).
+    if (outline.type !== undefined) {
       for (const placeId of placeIds) {
         const place = context.store.get("links", placeId);
         if (place?.kind !== "place" || place.outline !== outlineId) continue;
@@ -421,7 +424,7 @@ export function outlineCleanupOps(context: ActionContext, leaving: readonly Plac
   const outlineIds = new Set(leaving.flatMap((place) => (place.outline === undefined ? [] : [place.outline])));
   for (const outlineId of outlineIds) {
     const outline = context.store.get("outlines", outlineId);
-    if (outline === undefined || outline.type === "calendar") continue;
+    if (outline === undefined || outline.type !== undefined) continue;
     if (context.graph.membersOf(outlineId).every((place) => leavingIds.has(place.id))) ops.push(makeOp("outlines", outlineId, outline, null));
   }
   return ops;
@@ -436,6 +439,7 @@ export function withoutOutline(place: PlaceLink): PlaceLink {
   delete after.day;
   delete after.until;
   delete after.time;
+  delete after.offset;
   return after;
 }
 

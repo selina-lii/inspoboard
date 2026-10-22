@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { copyCards, pasteCards } from "../src/core/clipboard";
-import { createItemOnBoard } from "../src/core/actions";
+import { createItemOnBoard, createReply } from "../src/core/actions";
+import { createInside } from "../src/core/inside";
 import { DATA_INTEGRITY, IDEAS, loadTestContext, ROOT, TOOL_RESEARCH } from "./helpers";
 
 describe("copy and paste of cards", () => {
@@ -45,5 +46,26 @@ describe("copy and paste of cards", () => {
     expect(item.author).toBe("Bo");
     expect(item.on).toBeUndefined();
     expect(item.quote).toBeUndefined();
+  });
+
+  it("copies a page with the small items inside it and their replies", () => {
+    const context = loadTestContext();
+    const comment = createInside(context, { homeId: TOOL_RESEARCH, view: "comment", at: null, body: "Why?", author: "Bo", quote: "x" });
+    context.history.run(comment.command);
+    const reply = createReply(context, comment.itemId, "Al", "Because.");
+    context.history.run(reply.command);
+    const { command, placeIds } = pasteCards(context, copyCards(context, ["p1a1a1a1a1a1"]), IDEAS, { x: 0, y: 0 });
+    context.history.run(command);
+    const place = context.store.get("links", placeIds[0]!)!;
+    const pageId = place.kind === "place" ? place.to : "";
+    const inside = context.graph.insideOf(pageId);
+    expect(inside).toHaveLength(1);
+    expect(inside[0]).toMatchObject({ view: "comment", quote: "x" });
+    expect(inside[0]!.to).not.toBe(comment.itemId);
+    expect(context.store.get("texts", inside[0]!.to)!.body).toBe("Why?");
+    const replies = context.graph.attachedTo(inside[0]!.to);
+    expect(replies.map((item) => context.store.get("texts", item.id)!.body)).toEqual(["Because."]);
+    // The original keeps its own items.
+    expect(context.graph.insideOf(TOOL_RESEARCH).map((link) => link.to)).toEqual([comment.itemId]);
   });
 });

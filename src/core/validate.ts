@@ -5,7 +5,7 @@ import { isId } from "./ids";
 import type { GraphIndex } from "./graph";
 import type { Problem } from "./problems";
 import type { Store } from "./store";
-import { GROUP_SHAPES, LINK_CAPS, LIST_STYLES, SMALL_VIEWS, VIEW_STYLES, type Id, type TableName, QUOTE_MARKS } from "./types";
+import { GROUP_SHAPES, LINK_CAPS, LIST_STYLES, MEDIA_KINDS, SMALL_VIEWS, VIEW_STYLES, type Id, type TableName, QUOTE_MARKS } from "./types";
 
 /** Returns a list of schema errors. An empty list means the record is valid. */
 export function schemaErrors(table: TableName, value: unknown): string[] {
@@ -26,6 +26,7 @@ export function schemaErrors(table: TableName, value: unknown): string[] {
       need("created", isString, "an ISO 8601 string");
       allow("modified", isString, "an ISO 8601 string");
       allow("date", isString, "a string");
+      allow("subtitle", isString, "a string");
       allow("board", (v) => v === true, "true");
       allow("codeName", (v) => v === true, "true");
       allow("list", (v) => LIST_STYLES.includes(v as never), `one of ${LIST_STYLES.join(", ")}`);
@@ -41,6 +42,12 @@ export function schemaErrors(table: TableName, value: unknown): string[] {
       allow("pageAt", (v) => Array.isArray(v) && v.length === 2 && v.every(isFiniteNumber), "a list of two numbers");
       allow("trashed", isString, "an ISO 8601 string");
       allow("trashedFrom", isTrashedFrom, "an object {board, x, y, w, h, view}");
+      allow("sources", isIdList, "a list of IDs");
+      allow("discarded", isIdList, "a list of IDs");
+      allow("lostAndFound", (v) => v === true, "true");
+      allow("detached", (v) => v === true, "true");
+      allow("madeFrom", isMadeFromList, "a list of {from, seen}");
+      allow("media", isMedia, `an object {kind (${MEDIA_KINDS.join(", ")}), url, file, artist, cover, duration}`);
       break;
     case "texts":
       need("body", isString, "a string");
@@ -51,10 +58,13 @@ export function schemaErrors(table: TableName, value: unknown): string[] {
       need("y", isFiniteNumber, "a number");
       allow("list", (v) => LIST_STYLES.includes(v as never), `one of ${LIST_STYLES.join(", ")}`);
       allow("direction", (v) => v === "horizontal", '"horizontal"');
-      allow("type", (v) => v === "calendar", '"calendar"');
+      allow("type", (v) => v === "calendar" || v === "radial", '"calendar" or "radial"');
+      allow("radius", isFiniteNumber, "a number");
+      allow("seed", (v) => Number.isInteger(v), "a whole number");
       allow("name", isString, "a string");
       allow("start", isMonth, 'a month "YYYY-MM"');
       allow("end", isMonth, 'a month "YYYY-MM"');
+      allow("view", (v) => v === "week" || v === "year", '"week" or "year"');
       break;
     case "stamps":
       need("alt", isNonEmptyString, "a non-empty string");
@@ -69,6 +79,7 @@ export function schemaErrors(table: TableName, value: unknown): string[] {
         for (const field of ["x", "y", "w", "h"]) need(field, isFiniteNumber, "a number");
         need("view", (v) => VIEW_STYLES.includes(v as never), `one of ${VIEW_STYLES.join(", ")}`);
         allow("p3", isPoint3, "a list of three numbers");
+        allow("stubs", (v) => typeof v === "object" && v !== null && !Array.isArray(v) && Object.entries(v).every(([key, at]) => isId(key) && Array.isArray(at) && at.length === 2 && at.every(isFiniteNumber)), "an object of IDs to [x, y]");
         allow("expanded", (v) => typeof v === "boolean", "true or false");
         allow("rank", (v) => Number.isInteger(v) && (v as number) >= 0, "a whole number, 0 or more");
         allow("outline", isId, "an ID");
@@ -78,6 +89,7 @@ export function schemaErrors(table: TableName, value: unknown): string[] {
         allow("day", isDay, 'a day "YYYY-MM-DD"');
         allow("until", isDay, 'a day "YYYY-MM-DD"');
         allow("time", isTime, 'a time "HH:MM" or "HH:MM–HH:MM"');
+        allow("offset", (v) => Array.isArray(v) && v.length === 3 && v.every(isFiniteNumber), "a list of three numbers");
         allow("marks", (v) => QUOTE_MARKS.includes(v as never), `one of ${QUOTE_MARKS.join(", ")}`);
         allow("shape", (v) => GROUP_SHAPES.includes(v as never), `one of ${GROUP_SHAPES.join(", ")}`);
         allow("shapePath", isStampPath, "an SVG path (commands and numbers only)");
@@ -87,10 +99,13 @@ export function schemaErrors(table: TableName, value: unknown): string[] {
       } else if (record.kind === "link") {
         allow("label", isString, "a string");
         allow("group", isString, "a string");
+        allow("color", isColor, 'a color "#rrggbb"');
+        allow("dashed", (v) => v === true, "true");
         allow("start", (v) => LINK_CAPS.includes(v as never), `one of ${LINK_CAPS.join(", ")}`);
         allow("end", (v) => LINK_CAPS.includes(v as never), `one of ${LINK_CAPS.join(", ")}`);
         allow("quote", isNonEmptyString, "a non-empty string");
         allow("fromQuote", isNonEmptyString, "a non-empty string");
+        allow("onBoard", (v) => v === true, "true");
       } else if (record.kind === "inside") {
         need("view", (v) => SMALL_VIEWS.includes(v as never), `one of ${SMALL_VIEWS.join(", ")}`);
         allow("x", isFiniteNumber, "a number");
@@ -164,6 +179,15 @@ export function referenceProblems(store: Store, graph: GraphIndex, rootId: Id): 
   return problems;
 }
 
+/** A list of IDs. */
+function isMadeFromList(value: unknown): boolean {
+  return Array.isArray(value) && value.every((entry) => typeof entry === "object" && entry !== null && isId((entry as { from?: unknown }).from) && isString((entry as { seen?: unknown }).seen));
+}
+
+function isIdList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(isId);
+}
+
 /** A color "#rrggbb". */
 export function isColor(value: unknown): value is string {
   return typeof value === "string" && /^#[0-9a-fA-F]{6}$/.test(value);
@@ -215,4 +239,18 @@ function isTrashedFrom(value: unknown): boolean {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const from = value as Record<string, unknown>;
   return isId(from.board) && ["x", "y", "w", "h"].every((key) => isFiniteNumber(from[key])) && VIEW_STYLES.includes(from.view as never);
+}
+
+function isMedia(value: unknown): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const media = value as Record<string, unknown>;
+  const optional = (key: string, test: (v: unknown) => boolean) => media[key] === undefined || test(media[key]);
+  return (
+    MEDIA_KINDS.includes(media.kind as never) &&
+    optional("url", isString) &&
+    optional("file", isString) &&
+    optional("artist", isString) &&
+    optional("cover", (v) => typeof v === "string" && v.startsWith("images/")) &&
+    optional("duration", (v) => isFiniteNumber(v) && (v as number) >= 0)
+  );
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { NO_SKIP, readSettings, type SpeechSkip } from "../src/io/settings";
-import { readingMode, looksLikeMarkdown, markdownSpeech, filterReference, filterSpeech, latinShare, lineAt, lineStart, matchingLine, prepareSentences, referenceRanges } from "../src/ui/plugins/reading";
+import { leadOf, readingMode, looksLikeMarkdown, markdownSpeech, filterReference, filterSpeech, latinShare, lineAt, lineStart, matchingLine, prepareSentences, referenceRanges } from "../src/ui/plugins/reading";
 import { readableText } from "../src/ui/plugins/speech";
 import type { Overlay } from "../src/ui/plugins/overlay";
 
@@ -61,6 +61,11 @@ describe("read-aloud skip rules", () => {
 describe("read-aloud of Markdown", () => {
   it("reads Markdown without its marks", () => {
     expect(markdownSpeech("## Results and *more*")).toBe("Results and more");
+    expect(markdownSpeech("![A sky|320|right](images/sky.png) Clouds")).toBe("A sky Clouds");
+    // A page with a subtitle starts with its title and subtitle.
+    expect(leadOf({ name: "Attention", subtitle: "Vaswani et al., 2017" })).toBe("Attention. Vaswani et al., 2017.");
+    expect(leadOf({ name: "Why?", subtitle: "" })).toBeUndefined();
+    expect(leadOf({ name: "", subtitle: "A note" })).toBe("A note.");
     expect(markdownSpeech("- [x] **Done** with `code` and [the paper](https://a.example)")).toBe("Done with code and the paper");
     expect(markdownSpeech("> A quote ![chart](images/a.png)")).toBe("A quote chart");
     expect(markdownSpeech("| Name | Year |")).toBe("Name, Year");

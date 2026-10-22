@@ -61,6 +61,8 @@ export class Session {
   private state: SessionState;
   /** Item ID -> ISO time it was last opened. App state, not core data. */
   private opened = new Map<Id, string>();
+  /** The opened time of each item before its last open (memory only): "new since the last visit". */
+  private openedBefore = new Map<Id, string>();
   private openedTimer: ReturnType<typeof setTimeout> | undefined;
   /** File access for this vault. Every call names the vault folder. */
   private readonly vault: VaultAccess;
@@ -124,7 +126,10 @@ export class Session {
         onStatus: (saveStatus, error) => session.update({ saveStatus, saveError: error ?? null }),
       });
     }
-    session.stopWatching = await backend.onFileChange((change) => session.applyOutsideChange(change));
+    // Only the changes of this vault (a different window can show a different vault).
+    session.stopWatching = await backend.onFileChange((change) => {
+      if (change.root === undefined || change.root === opened.root) session.applyOutsideChange(change);
+    });
     return session;
   }
 
@@ -189,6 +194,18 @@ export class Session {
     return source === null ? null : this.backend.importImage(this.state.root, source);
   }
 
+  /** Copies an image file (dropped from the system) into the vault. Returns its vault path. */
+  importImageFile(source: string): Promise<string> {
+    if (this.state.readOnly) throw new Error("The vault is read-only.");
+    return this.backend.importImage(this.state.root, source);
+  }
+
+  /** Saves the images on the system clipboard into the vault. Returns their vault paths (empty if there are none). */
+  pasteImages(): Promise<string[]> {
+    if (this.state.readOnly) throw new Error("The vault is read-only.");
+    return this.backend.pasteImages(this.state.root);
+  }
+
   /** Saves a pasted or dropped image into the vault. Returns its vault path ("images/<name>"). */
   saveImageBytes(name: string, bytes: Uint8Array): Promise<string> {
     if (this.state.readOnly) throw new Error("The vault is read-only.");
@@ -208,6 +225,11 @@ export class Session {
     await this.backend.writeWebFile(this.state.root, path, content);
   }
 
+  /** See Backend.pdfPageUrl. */
+  pdfPageUrl(key: string, page: number, width: number, crop?: { left: number; top: number; width: number; height: number }): string | null {
+    return this.backend.pdfPageUrl(key, page, width, crop);
+  }
+
   readWebBytes(path: string): Promise<ArrayBuffer> {
     return this.backend.readWebBytes(this.state.root, path);
   }
@@ -215,6 +237,16 @@ export class Session {
   async writeWebBytes(path: string, bytes: Uint8Array): Promise<void> {
     if (this.state.readOnly) throw new Error("The vault is read-only.");
     await this.backend.writeWebBytes(this.state.root, path, bytes);
+  }
+
+  /** See Backend.itemFilesSize. */
+  itemFilesSize(keys: readonly string[]): Promise<number> {
+    return this.backend.itemFilesSize(this.state.root, keys);
+  }
+
+  async copyItemFiles(from: string, to: string): Promise<number> {
+    if (this.state.readOnly) throw new Error("The vault is read-only.");
+    return this.backend.copyItemFiles(this.state.root, from, to);
   }
 
   /** A file dialog for a PDF. Returns its path, or null if the user cancelled. */
@@ -283,9 +315,16 @@ export class Session {
     return this.opened.get(id);
   }
 
+  /** The time an item was opened before its last open (this visit), or undefined. */
+  openedBeforeAt(id: Id): string | undefined {
+    return this.openedBefore.get(id);
+  }
+
   /** Records that the user opened an item. Saved after a short delay. Not a command, not in history. */
   markOpened(id: Id): void {
     if (this.state.readOnly || !this.store.has("items", id)) return;
+    const before = this.opened.get(id);
+    if (before !== undefined) this.openedBefore.set(id, before);
     this.opened.set(id, new Date().toISOString());
     clearTimeout(this.openedTimer);
     this.openedTimer = setTimeout(() => void this.saveOpened(), 1000);

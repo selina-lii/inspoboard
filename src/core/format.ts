@@ -14,12 +14,15 @@ import { schemaErrors } from "./validate";
 import type { AnyRecord, Id, TableName } from "./types";
 
 /**
- * The vault format. The app reads this version and all older ones.
+ * The vault format. The app reads this version only (MIN_FORMAT to FORMAT_VERSION).
  * - 1: the first format.
  * - 2: small items inside pages and saved web pages are `inside` links; each link object has its own web copy
- *   (SPEC 1.1). scripts/migrations/inside-links.mjs changes a vault from 1 to 2. A format-1 vault opens as it is.
+ *   (SPEC 1.1). scripts/migrations/inside-links.mjs changes a vault from 1 to 2.
+ * A vault of an older format has an error: it opens read-only (the app writes nothing) until the user runs the
+ * migration script. Only the migration reads the older format (`oldFormat`).
  */
 export const FORMAT_VERSION = 2;
+export const MIN_FORMAT = 2;
 
 export const VAULT_FILE = "vault.json";
 export const APP_FOLDER = ".inspoboard";
@@ -49,10 +52,10 @@ export const TABLE_FILES: Record<LineTable, string> = {
 
 /** Field order in saved lines. Known fields come first. Other fields follow in alphabetical order. */
 const FIELD_ORDER: Record<LineTable, readonly string[]> = {
-  items: ["id", "name", "codeName", "created", "modified", "date", "board", "list", "background", "backgroundWidth", "backgroundCenter", "backgroundFixed", "url", "author", "on", "quote", "resolved", "pageAt", "trashed", "trashedFrom"],
-  links: ["id", "kind", "from", "to", "view", "x", "y", "w", "h", "expanded", "color", "ref", "outline", "parent", "rank", "day", "until", "time", "p3", "label", "group", "start", "end", "quote", "at", "fromQuote", "marks", "shape", "shapePath", "filled"],
+  items: ["id", "name", "subtitle", "codeName", "created", "modified", "date", "board", "list", "background", "backgroundWidth", "backgroundCenter", "backgroundFixed", "url", "author", "on", "quote", "resolved", "pageAt", "trashed", "trashedFrom", "media", "sources", "discarded", "lostAndFound", "detached", "madeFrom"],
+  links: ["id", "kind", "from", "to", "view", "x", "y", "w", "h", "expanded", "color", "ref", "outline", "parent", "rank", "day", "until", "time", "offset", "p3", "stubs", "label", "group", "start", "end", "quote", "at", "fromQuote", "onBoard", "dashed", "marks", "shape", "shapePath", "filled"],
   stamps: ["id", "alt", "w", "h", "path"],
-  outlines: ["id", "type", "name", "board", "x", "y", "list", "direction", "start", "end"],
+  outlines: ["id", "type", "name", "board", "x", "y", "list", "direction", "start", "end", "radius", "seed"],
 };
 
 export type VaultMeta = {
@@ -118,10 +121,10 @@ export type DecodedVault = {
 };
 
 /** Reads vault files into a new store. Never throws for bad data. Reports problems. */
-export function decodeVault(files: ReadonlyMap<string, string>): DecodedVault {
+export function decodeVault(files: ReadonlyMap<string, string>, options: { oldFormat?: boolean } = {}): DecodedVault {
   const problems: Problem[] = [];
   const store = new Store();
-  const meta = decodeMeta(files.get(VAULT_FILE), problems);
+  const meta = decodeMeta(files.get(VAULT_FILE), problems, options.oldFormat === true);
 
   for (const table of LINE_TABLES) {
     const path = TABLE_FILES[table];
@@ -145,7 +148,7 @@ export function decodeVault(files: ReadonlyMap<string, string>): DecodedVault {
   return { store, meta, problems };
 }
 
-function decodeMeta(text: string | undefined, problems: Problem[]): VaultMeta | null {
+function decodeMeta(text: string | undefined, problems: Problem[], oldFormat: boolean): VaultMeta | null {
   if (text === undefined) {
     problems.push({ severity: "error", code: "meta-missing", message: "The vault has no vault.json file.", path: VAULT_FILE });
     return null;
@@ -161,6 +164,14 @@ function decodeMeta(text: string | undefined, problems: Problem[]): VaultMeta | 
       severity: "error",
       code: "format-too-new",
       message: `The vault uses format ${record.format}. This app reads format ${FORMAT_VERSION} or lower.`,
+      path: VAULT_FILE,
+    });
+  }
+  if (record.format < MIN_FORMAT && !oldFormat) {
+    problems.push({
+      severity: "error",
+      code: "format-too-old",
+      message: `The vault uses format ${record.format}. This app reads format ${MIN_FORMAT}. Run the migration script once (scripts/migrations/inside-links.mjs, with --apply), then open the vault again. Until then the app does not change the vault.`,
       path: VAULT_FILE,
     });
   }

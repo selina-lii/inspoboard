@@ -1,0 +1,52 @@
+/* The compare bench (lab plugin): floats above all views (board, pages, the web page and PDF reader). */
+.compare-bench { position: fixed; z-index: 900; font-size: 13px; color: var(--text); }
+.compare-bench.folded .compare-bench-pet {
+  position: relative; width: 48px; height: 48px; border-radius: 50%; border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel) 50%, transparent); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  color: var(--accent); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+  display: grid; place-items: center; cursor: grab;
+}
+.compare-bench.folded .compare-bench-pet:hover { transform: translateY(-1px); }
+.compare-bench-dots { position: absolute; bottom: 7px; left: 50%; transform: translateX(-50%); display: flex; gap: 3px; }
+.compare-bench-dots span { width: 5px; height: 5px; border-radius: 50%; border: 1px solid var(--accent); }
+.compare-bench-dots span.full { background: var(--accent); }
+.compare-bench.open {
+  /* Half transparent: the view behind shows through (blurred, so the text of the bench stays readable). */
+  width: min(520px, calc(100vw - 16px)); background: color-mix(in srgb, var(--panel) 50%, transparent);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.32); overflow: hidden;
+}
+.compare-bench-head { display: flex; align-items: center; gap: 6px; padding: 6px 8px 6px 12px; cursor: grab; border-bottom: 1px solid var(--border); user-select: none; }
+.compare-bench-head:active { cursor: grabbing; }
+.compare-bench-title { font-weight: 600; flex: 1; }
+.compare-bench-count { font-size: 11px; }
+.compare-bench-body { display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px; padding: 10px; align-items: stretch; }
+.compare-bench-slot { min-width: 0; min-height: 112px; display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 8px; border: 1px solid var(--border); background: color-mix(in srgb, var(--bg, transparent) 35%, transparent); }
+.compare-bench-slot.empty { border-style: dashed; }
+.compare-bench-slot { cursor: pointer; }
+.compare-bench-slot.armed { border-style: solid; border-color: var(--accent); animation: compare-bench-armed 1.2s ease-in-out infinite; }
+@keyframes compare-bench-armed { 50% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); } }
+.compare-bench-ghost {
+  position: fixed; z-index: 1000; pointer-events: none; display: flex; align-items: center; gap: 5px; max-width: 240px;
+  padding: 6px 10px; border-radius: 8px; background: var(--panel); border: 1px solid var(--accent); opacity: 0.92;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.3); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.compare-bench-slot.over { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }
+.compare-bench-slot-head { display: flex; align-items: center; gap: 2px; min-height: 20px; }
+.compare-bench-slot-role { flex: 1; font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.05em; }
+.compare-bench-hint { color: var(--text-faint); font-size: 12px; text-align: center; padding: 4px 0; }
+.compare-bench-fill { display: grid; gap: 4px; margin-top: auto; }
+.compare-bench-fill button { display: flex; align-items: center; gap: 6px; justify-content: center; padding: 4px 8px; font-size: 12px; }
+.compare-bench-end { display: grid; gap: 4px; text-align: left; border: 0; background: none; color: inherit; padding: 2px; border-radius: 6px; cursor: pointer; font: inherit; min-width: 0; }
+.compare-bench-end:hover { background: var(--hover, rgba(127, 127, 127, 0.12)); }
+.compare-bench-end-title { display: flex; align-items: center; gap: 5px; font-weight: 600; min-width: 0; }
+.compare-bench-end-title span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.compare-bench-end-quote { font-size: 12px; color: var(--text-faint); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; font-family: var(--serif, Georgia, serif); }
+.compare-bench-end-kind { font-size: 12px; color: var(--text-faint); }
+.compare-bench-middle { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; }
+.compare-bench-link { padding: 6px 14px; font-weight: 600; }
+.compare-bench-message { padding: 6px 12px 10px; font-size: 12px; color: var(--text-faint); }
+@media (max-width: 520px) {
+  .compare-bench-body { grid-template-columns: 1fr; }
+  .compare-bench-middle { flex-direction: row; }
+}

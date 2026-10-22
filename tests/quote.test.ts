@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createItemOnBoard, defaultQuoteMarks, renameItem, setQuoteMarks, writeText } from "../src/core/actions";
 import { linearize } from "../src/core/linearize";
 import { schemaErrors } from "../src/core/validate";
-import { quoteStart } from "../src/ui/board/nodes";
+import { quoteStart } from "../src/ui/board/objectCards";
 import { loadTestContext, ROOT } from "./helpers";
 
 describe("quote cards", () => {

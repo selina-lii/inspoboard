@@ -9,7 +9,8 @@ import { useSession } from "./sessionContext";
 
 type Options = {
   setTool(update: ToolId | ((current: ToolId) => ToolId)): void;
-  openSearch(): void;
+  /** `replace`: show the replace field too (Ctrl+Alt+F). */
+  openSearch(replace?: boolean): void;
   addItem(): void;
   collapseAll(): void;
   back(): void;
@@ -29,10 +30,10 @@ export function useShortcuts({ setTool, openSearch, addItem, collapseAll, back, 
         void session.saveNow();
         return;
       }
-      // Search works everywhere, also in the editor.
+      // Search works everywhere, also in the editor. With Alt: search and replace.
       if (mod && key === "f") {
         event.preventDefault();
-        openSearch();
+        openSearch(event.altKey);
         return;
       }
       // Ctrl+Shift+P (or Cmd+Shift+P): collapse all cards on the board. Works also in a text field.

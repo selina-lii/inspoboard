@@ -15,10 +15,12 @@ type CommitFieldProps = {
   onCommit(value: string): void;
   /** Called after Enter, Escape, or blur. */
   onDone?(): void;
+  /** Called after Enter (after the commit), for example to go on to the next field. */
+  onEnter?(): void;
 };
 
 /** A text field that commits on blur or Enter. Escape restores the stored value. */
-export function CommitField({ label, value, placeholder, className, disabled, autoFocus, wrap, onCommit, onDone }: CommitFieldProps) {
+export function CommitField({ label, value, placeholder, className, disabled, autoFocus, wrap, onCommit, onDone, onEnter }: CommitFieldProps) {
   const [draft, setDraft] = useState(value);
   useEffect(() => setDraft(value), [value]);
   const area = useRef<HTMLTextAreaElement>(null);
@@ -40,6 +42,7 @@ export function CommitField({ label, value, placeholder, className, disabled, au
     if (event.key === "Enter") {
       event.preventDefault();
       event.currentTarget.blur();
+      onEnter?.();
     }
     if (event.key === "Escape") {
       setDraft(value);

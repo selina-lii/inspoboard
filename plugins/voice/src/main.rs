@@ -90,13 +90,39 @@ impl Plugin {
         packs::model_folder(&self.packs, &KOKORO)
     }
 
-    /// One sentence. Speed and volume stay normal: the app changes them while it plays.
+    /// One sentence: `text`, or `parts: [{text, rate}]` (each part at its own speed, for example a formula slower;
+    /// the parts make one clip). Volume and the main speed stay normal: the app changes them while it plays.
     fn speak(&self, params: &Value) -> Result<Value, String> {
         let (voice, style) = self.voice_and_style(params, 1.0, 1.0)?;
-        let encoded = match self.engines.speak(&voice, text_of(params)?, &style, &self.kokoro_folder())? {
-            Audio::Wav { samples, sample_rate } => ("audio/wav", audio::wav(&samples, sample_rate, 1.0)),
-            Audio::Mp3(bytes) => ("audio/mpeg", bytes),
+        let parts: Vec<(String, f32)> = match params.get("parts").and_then(Value::as_array) {
+            Some(parts) => parts
+                .iter()
+                .filter_map(|part| Some((part.get("text")?.as_str()?.to_string(), part.get("rate").and_then(Value::as_f64).unwrap_or(1.0) as f32)))
+                .filter(|(text, _)| !text.trim().is_empty())
+                .collect(),
+            None => vec![(text_of(params)?.to_string(), 1.0)],
         };
+        if parts.is_empty() {
+            return Err("There is no text to say.".to_string());
+        }
+        let mut samples: Vec<f32> = Vec::new();
+        let mut sample_rate = 24_000;
+        let mut mp3: Vec<u8> = Vec::new();
+        let last = parts.len() - 1;
+        for (index, (text, rate)) in parts.iter().enumerate() {
+            let part_style = Style { rate: (style.rate * rate).clamp(0.25, 4.0), ..style };
+            match self.engines.speak(&voice, text, &part_style, &self.kokoro_folder())? {
+                Audio::Wav { samples: part, sample_rate: rate } => {
+                    sample_rate = rate;
+                    let start = if index == 0 { audio::KEEP_START_MS } else { audio::KEEP_JOIN_MS };
+                    let end = if index == last { audio::KEEP_END_MS } else { audio::KEEP_JOIN_MS };
+                    samples.extend(audio::trim_silence(&part, rate, start, end));
+                }
+                // MP3 frames can follow each other: the parts make one file.
+                Audio::Mp3(bytes) => mp3.extend(bytes),
+            }
+        }
+        let encoded = if mp3.is_empty() { ("audio/wav", audio::wav(&samples, sample_rate, 1.0)) } else { ("audio/mpeg", mp3) };
         Ok(json!({ "mime": encoded.0, "audio": base64::engine::general_purpose::STANDARD.encode(encoded.1) }))
     }
 
@@ -125,7 +151,7 @@ impl Plugin {
             match self.engines.speak(&voice, sentence, &style, &self.kokoro_folder())? {
                 Audio::Wav { samples: part, sample_rate: rate } => {
                     sample_rate = rate;
-                    samples.extend(part);
+                    samples.extend(audio::trim_silence(&part, rate, audio::KEEP_START_MS, audio::KEEP_END_MS));
                 }
                 // MP3 frames can follow each other: the parts make one file.
                 Audio::Mp3(bytes) => mp3.extend(bytes),

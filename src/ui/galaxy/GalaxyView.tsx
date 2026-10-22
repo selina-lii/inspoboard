@@ -13,18 +13,24 @@
 import { useShownTheme } from "../app/theme";
 import { Line, OrbitControls } from "@react-three/drei";
 import { Canvas, useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
-import { Compass, Sparkles, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ComponentRef, type MutableRefObject, type RefObject } from "react";
-import { DoubleSide, ExtrudeGeometry, Plane, Quaternion, Shape as ThreeShape, ShapeGeometry, Vector2, Vector3 } from "three";
+import { Compass, GitBranch, Route, Sparkles, Tag, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentRef, type MutableRefObject, type RefObject } from "react";
+import { AdditiveBlending, CanvasTexture, DoubleSide, ExtrudeGeometry, Plane, Quaternion, Shape as ThreeShape, ShapeGeometry, Vector2, Vector3 } from "three";
+import { buildTour, stopAt, tourTarget, type Tour } from "./tour";
 import { removeFromBoard, setGroupFilled, setPlacement3d } from "../../core/actions";
 import { ContextMenu, type MenuRequest } from "../app/ContextMenu";
 import { useBoardBackground } from "../app/vaultImages";
 import type { Id, Point3 } from "../../core/types";
 import { usePinchZoom, type PinchHandler } from "../app/gestures";
+import { moveOutline } from "../../core/outline";
 import { useRunCommand, useSession, useSessionState, useStoreRevision } from "../app/sessionContext";
 import { useWorkspaceActions } from "../app/workspaceActions";
 import { groupColor } from "../app/colors";
-import { boardToWorld, buildGalaxyModel, UNITS_PER_3D, worldToPlacement, type GalaxyArea, type GalaxyLine, type GalaxyModel, type GalaxyPoint } from "./galaxyModel";
+import { buildGalaxyModel, UNITS_PER_3D, worldToPlacement, type GalaxyArea, type GalaxyLine, type GalaxyModel, type GalaxyPoint } from "./galaxyModel";
+import { t } from "../i18n/i18n";
+import { buildEvolution, type DepthBy, type EvolutionLayout } from "./evolution";
+import { EvolutionScene } from "./EvolutionScene";
+import { titleOf } from "../board/boardModel";
 import "./galaxy.css";
 
 type OrbitControlsImpl = ComponentRef<typeof OrbitControls>;
@@ -71,6 +77,7 @@ function readColors(): Colors {
 
 export function GalaxyView({ boardId }: { boardId: Id }) {
   const session = useSession();
+  const actions = useWorkspaceActions();
   const revision = useStoreRevision();
   const [seed, setSeed] = useState(() => seeds.get(boardId) ?? 0);
   useEffect(() => setSeed(seeds.get(boardId) ?? 0), [boardId]);
@@ -101,6 +108,36 @@ export function GalaxyView({ boardId }: { boardId: Id }) {
   const labels = useRef(new Map<Id, HTMLDivElement>());
   const [hovered, setHovered] = useState<Id | null>(null);
   const [menu, setMenu] = useState<MenuRequest | null>(null);
+  // The tour (a cruising camera, tour.ts). A drag on the view, Esc, or the button ends it. It also runs in Buzzies mode.
+  const [touring, setTouring] = useState(false);
+  const [tourInfo, setTourInfo] = useState("");
+  const endTour = useCallback(() => setTouring(false), []);
+  useEffect(() => {
+    if (!touring) return;
+    const onKey = (event: KeyboardEvent) => event.key === "Escape" && setTouring(false);
+    const onPointer = (event: PointerEvent) => (event.target as Element | null)?.closest(".galaxy canvas") != null && setTouring(false);
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("pointerdown", onPointer, true);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("pointerdown", onPointer, true);
+    };
+  }, [touring]);
+
+  // The evolution plot (SPEC 7.16): items in generations. View state: it stays while the app is open.
+  const [evolutionOn, setEvolutionOn] = useState(false);
+  const [depthBy, setDepthBy] = useState<DepthBy>("both");
+  const [evolutionLayout, setEvolutionLayout] = useState<EvolutionLayout>("walls");
+  const [nebula, setNebula] = useState(4);
+  const [lineageOf, setLineageOf] = useState<Id | null>(null);
+  const evolutionLabels = useRef<HTMLDivElement>(null);
+  const evolution = useMemo(
+    () => (evolutionOn ? buildEvolution(session.store, session.graph, boardId, depthBy, evolutionLayout, nebula) : null),
+    // The revision changes after each store write. It is a dependency on purpose.
+    [evolutionOn, session, boardId, revision, depthBy, evolutionLayout, nebula], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  const generationLabel = useCallback((generation: number, count: number) => t("Generation {0} · {1} items", generation, count), []);
+  const selectedNode = evolution?.nodes.find((node) => node.id === lineageOf) ?? null;
 
   const pinch = useMemo<PinchHandler>(
     () => ({ begin: () => camera.current?.begin() ?? 1, change: (zoom) => camera.current?.dolly(zoom) }),
@@ -110,16 +147,21 @@ export function GalaxyView({ boardId }: { boardId: Id }) {
 
   return (
     <div ref={wrapper} className="galaxy" style={fixedStyle}>
-      <Canvas camera={{ position: [0, 0, 12], fov: 50 }} onContextMenu={(event) => event.preventDefault()}>
+      <Canvas camera={{ position: [0, 0, 12], fov: 50, far: evolution !== null ? 5000 : 2000 }} onContextMenu={(event) => event.preventDefault()} onPointerMissed={() => setLineageOf(null)}>
         {fixedStyle === undefined && <color attach="background" args={[backgroundColor]} />}
         <ambientLight intensity={0.8} />
         <pointLight position={[10, 10, 10]} intensity={60} />
-        <Scene key={boardId} model={model} seed={seed} colors={colors} cameraApi={camera} labels={labels} hovered={hovered} setHovered={setHovered} onMenu={setMenu} />
+        {evolution !== null ? (
+          <EvolutionScene key={`evolution:${boardId}`} evolution={evolution} layout={evolutionLayout} background={backgroundColor} nestColor={colors.cluster} labelLayer={evolutionLabels} selected={lineageOf} onSelect={setLineageOf} generationLabel={generationLabel} />
+        ) : (
+          <Scene key={boardId} model={model} seed={seed} colors={colors} cameraApi={camera} labels={labels} hovered={hovered} setHovered={setHovered} onMenu={setMenu} touring={touring} onTourEnd={endTour} onTourInfo={setTourInfo} />
+        )}
       </Canvas>
-      <div className="galaxy-labels">
+      {evolution !== null && <div ref={evolutionLabels} className="galaxy-labels" />}
+      <div className="galaxy-labels" hidden={evolution !== null}>
         {model.points
-          // A note with no name shows a label only on hover: then the start of its text.
-          .filter((point) => (point.depth === 1 && point.label !== "") || point.key === hovered)
+          // A note with no name shows a label only on hover: then the start of its text. "Hide labels": all only on hover.
+          .filter((point) => (point.depth === 1 && point.label !== "" && !settings.galaxyHideLabels) || point.key === hovered)
           .map((point) => (
             <div
               key={point.key}
@@ -146,13 +188,90 @@ export function GalaxyView({ boardId }: { boardId: Id }) {
             </div>
           ))}
       </div>
+      {touring && (
+        <div className="galaxy-tour-info" role="status">
+          <Route size={13} />
+          <span dir="auto" translate="no">{tourInfo}</span>
+        </div>
+      )}
+      {evolution !== null && (
+        <div className="galaxy-evolution-bar" role="group" aria-label="Evolution plot">
+          <span className="muted">Depth</span>
+          <span className="segmented">
+            {(["made", "nest", "both"] as const).map((value) => (
+              <button key={value} className={depthBy === value ? "active" : ""} aria-pressed={depthBy === value} onClick={() => setDepthBy(value)}>
+                {value === "made" ? "Made from" : value === "nest" ? "Nesting" : "Both"}
+              </button>
+            ))}
+          </span>
+          <span className="segmented">
+            {(["walls", "floors"] as const).map((value) => (
+              <button key={value} className={evolutionLayout === value ? "active" : ""} aria-pressed={evolutionLayout === value} onClick={() => setEvolutionLayout(value)}>
+                {value === "walls" ? "Walls" : "Floors"}
+              </button>
+            ))}
+          </span>
+          <label className="galaxy-evolution-nebula">
+            <span className="muted">Nebula</span>
+            <input type="range" min={0} max={10} step={0.5} value={nebula} onChange={(event) => setNebula(Number(event.target.value))} />
+          </label>
+          <span className="muted">{t("{0} items · {1} generations", evolution.nodes.length, evolution.layers.length)}</span>
+        </div>
+      )}
+      {selectedNode !== null && (
+        <div className="galaxy-evolution-card" role="status">
+          <strong dir="auto" translate="no">{titleOf(session.store, selectedNode.id)}</strong>
+          <span className="muted">{t("Generation {0} · made from {1}", selectedNode.generation, selectedNode.sources)}</span>
+          {selectedNode.outdated && <span className="galaxy-evolution-stale">A source changed since this was made.</span>}
+          {session.store.has("items", selectedNode.id) && <button onClick={() => actions.openText(selectedNode.id)}>Open</button>}
+        </div>
+      )}
       <div className="galaxy-tools">
-        <button className="icon-button" data-tip="Reorient: front view of the board" data-tip-start onClick={() => camera.current?.reorient()}>
-          <Compass size={16} />
+        <button
+          className={`icon-button${evolutionOn ? " active" : ""}`}
+          data-tip={evolutionOn ? "Back to the board in 3D" : "Evolution: items in generations (what they were made from, and nesting)"}
+          data-tip-start
+          aria-pressed={evolutionOn}
+          onClick={() => {
+            setTouring(false);
+            setLineageOf(null);
+            setEvolutionOn((on) => !on);
+          }}
+        >
+          <GitBranch size={16} />
         </button>
-        <button className="icon-button" data-tip="Explode: a new random spread (cards that you placed stay)" data-tip-start onClick={explode}>
-          <Sparkles size={16} />
-        </button>
+        {/* The tools of the board in 3D. The evolution plot has its own bar. */}
+        {!evolutionOn && (
+          <>
+            <button className="icon-button" data-tip="Reorient: front view of the board" data-tip-start onClick={() => camera.current?.reorient()}>
+              <Compass size={16} />
+            </button>
+            <button
+              className={`icon-button${touring ? " active" : ""}`}
+              data-tip={touring ? "Stop the tour" : "Tour: a cruise through the whole board at one speed (a drag or Esc stops it)"}
+              data-tip-start
+              aria-pressed={touring}
+              onClick={() => {
+                setTourInfo("");
+                setTouring((on) => !on);
+              }}
+            >
+              <Route size={16} />
+            </button>
+            <button className="icon-button" data-tip="Explode: a new random spread (cards that you placed stay)" data-tip-start onClick={explode}>
+              <Sparkles size={16} />
+            </button>
+            <button
+              className={`icon-button${settings.galaxyHideLabels ? " active" : ""}`}
+              data-tip={settings.galaxyHideLabels ? "Show labels" : "Hide labels (a label shows when the pointer is on its dot)"}
+              data-tip-start
+              aria-pressed={settings.galaxyHideLabels}
+              onClick={() => void session.updateSettings({ galaxyHideLabels: !settings.galaxyHideLabels })}
+            >
+              <Tag size={16} />
+            </button>
+          </>
+        )}
       </div>
       {menu !== null && <ContextMenu request={menu} onClose={() => setMenu(null)} />}
     </div>
@@ -168,9 +287,18 @@ type SceneProps = {
   hovered: Id | null;
   setHovered(update: (current: Id | null) => Id | null): void;
   onMenu(request: MenuRequest): void;
+  /** The tour (a cruising camera) runs. `onTourInfo`: what the camera shows now (for the line at the top). */
+  touring: boolean;
+  onTourEnd(): void;
+  onTourInfo(text: string): void;
 };
 
-function Scene({ model, seed, colors, cameraApi, labels, hovered, setHovered, onMenu }: SceneProps) {
+/** The color of a link line: its own color, else the color of its group, else the line color of the theme. */
+function lineColor(line: GalaxyLine, colors: Colors): string {
+  return line.color ?? (line.group !== undefined ? groupColor(line.group) : colors.line);
+}
+
+function Scene({ model, seed, colors, cameraApi, labels, hovered, setHovered, onMenu, touring, onTourEnd, onTourInfo }: SceneProps) {
   const controls = useRef<OrbitControlsImpl>(null);
   const { camera, size } = useThree();
   /** Live positions while a dot moves. The store changes only when the drag ends. */
@@ -234,6 +362,9 @@ function Scene({ model, seed, colors, cameraApi, labels, hovered, setHovered, on
 
   const positionOf = (point: GalaxyPoint): Point3 => {
     if (dragging?.key === point.key) return dragging.position;
+    // The cards of a radial move with its core while it is dragged.
+    const core = dragging !== null && point.followKey === dragging.key ? model.points.find((other) => other.key === dragging.key) : undefined;
+    if (core !== undefined) return [point.position[0] + dragging!.position[0] - core.position[0], point.position[1] + dragging!.position[1] - core.position[1], point.position[2] + dragging!.position[2] - core.position[2]];
     const from = tween?.from.get(point.key);
     if (tween === null || from === undefined) return point.position;
     const amount = ease(tween.progress);
@@ -282,14 +413,16 @@ function Scene({ model, seed, colors, cameraApi, labels, hovered, setHovered, on
 
   return (
     <>
-      <OrbitControls ref={controls} makeDefault enableDamping dampingFactor={0.12} minDistance={MIN_DISTANCE} maxDistance={MAX_DISTANCE} />
+      <OrbitControls ref={controls} makeDefault enableDamping dampingFactor={0.12} minDistance={MIN_DISTANCE} maxDistance={MAX_DISTANCE} enabled={!touring} />
+      {touring && <TourRunner model={model} controls={controls} onEnd={onTourEnd} onInfo={onTourInfo} />}
+      {touring && <Glow points={model.points} colors={colors} />}
       {model.lines.map((line) => (
         <Line
           key={line.key}
           points={[moved(line.from), moved(line.to)]}
-          color={line.kind === "cluster" ? colors.cluster : line.group !== undefined ? groupColor(line.group) : colors.line}
+          color={line.kind === "cluster" ? colors.cluster : lineColor(line, colors)}
           lineWidth={line.kind === "cluster" ? 0.6 : 1.2}
-          dashed={line.kind === "cluster"}
+          dashed={line.kind === "cluster" || line.dashed === true}
           dashSize={0.12}
           gapSize={0.08}
           transparent
@@ -300,7 +433,7 @@ function Scene({ model, seed, colors, cameraApi, labels, hovered, setHovered, on
         if (line.kind !== "relation") return null;
         const from = moved(line.from);
         const to = moved(line.to);
-        const color = line.group !== undefined ? groupColor(line.group) : colors.line;
+        const color = lineColor(line, colors);
         return (
           <group key={`caps:${line.key}`}>
             {isArrow(line.end) && <ArrowHead from={from} to={to} gap={radiusOf(pointByKey.get(line.toKey))} color={color} open={line.end === "open-arrow"} />}
@@ -346,7 +479,9 @@ function Dot({ point, position, colors, hovered, onHover, controls, onDrag, onMe
   const radius = radiusOf(point);
   const onPointerDown = (event: ThreeEvent<PointerEvent>) => {
     // A group point comes from its cards: it does not move by itself. A satellite inside a page has no card to move.
-    if (event.button !== 0 || readOnly || point.kind === "group" || point.placeId === "") return;
+    // A radial core moves (its cards follow it). The cards of a radial keep their place in its ball.
+    const movable = point.groupType === "radial" ? point.kind === "group" : point.kind !== "group" && point.placeId !== "" && point.followKey === undefined;
+    if (event.button !== 0 || readOnly || !movable) return;
     event.stopPropagation();
     (event.target as unknown as Element).setPointerCapture(event.pointerId);
     if (controls.current !== null) controls.current.enabled = false;
@@ -372,9 +507,14 @@ function Dot({ point, position, colors, hovered, onHover, controls, onDrag, onMe
     drag.current = null;
     if (controls.current !== null) controls.current.enabled = true;
     onDrag(null);
-    if (final !== point.position) {
-      runCommand(setPlacement3d(session.context, new Map([[point.placeId, worldToPlacement(point, final)]])));
+    if (final === point.position) return;
+    if (point.kind === "group") {
+      // The core of a radial: its new place on the board (the plane of the board; the depth is not saved).
+      const radial = session.store.get("outlines", point.recordId);
+      if (radial !== undefined) runCommand(moveOutline(session.context, radial.id, Math.round(radial.x + (final[0] - point.position[0]) * UNITS_PER_3D), Math.round(radial.y - (final[1] - point.position[1]) * UNITS_PER_3D)));
+      return;
     }
+    runCommand(setPlacement3d(session.context, new Map([[point.placeId, worldToPlacement(point, final)]])));
   };
 
   return (
@@ -418,7 +558,8 @@ function Dot({ point, position, colors, hovered, onHover, controls, onDrag, onMe
           if (point.kind === "stamp" || point.kind === "group") return;
           // A note never opens as a page: show it on its board. A reference opens a quick view.
           if (point.isReference) actions.openText(point.recordId);
-          else if (point.view === "note" && !point.isBoard) actions.openAt(point.recordId);
+          // A link object (an item with a web address or PDF, not a board) opens its saved page, not an empty board.
+          else if ((point.view === "note" || session.store.get("items", point.recordId)?.url !== undefined) && !point.isBoard) actions.openAt(point.recordId);
           else actions.openRecord(point.recordId);
         }}
       >
@@ -444,6 +585,15 @@ function Shape({ point, radius, colors, hovered }: { point: GalaxyPoint; radius:
   const tint = (color: string) => (hovered ? colors.selected : color);
   // Groups (and boards that are one group): an outline is a green book, a calendar a blue calendar.
   if (point.kind === "group" || (point.groupType !== null && !point.isReference)) {
+    // A radial core: a light red ball, as its circle on the board.
+    if (point.groupType === "radial") {
+      return (
+        <>
+          <sphereGeometry args={[radius * 1.1, 24, 16]} />
+          <meshStandardMaterial color={tint(GROUP_COLORS.radial)} emissive={GROUP_COLORS.radial} emissiveIntensity={0.35} />
+        </>
+      );
+    }
     if (point.groupType === "calendar") {
       return (
         <>
@@ -517,7 +667,7 @@ function Shape({ point, radius, colors, hovered }: { point: GalaxyPoint; radius:
   );
 }
 
-const GROUP_COLORS = { outline: "#3fbf6a", calendar: "#4a90ff" };
+const GROUP_COLORS = { outline: "#3fbf6a", calendar: "#4a90ff", radial: "#ff8f8f" };
 
 /** Objects: comment = pink bubble, link = blue ring, action item = film, flashcard = cornflower card. */
 const OBJECT_LOOKS: Partial<Record<GalaxyPoint["view"], { shape: "bubble" | "ring" | "card"; color: string }>> = {
@@ -581,6 +731,92 @@ function AreaShape({ area, color, hovered, selectedColor }: { area: GalaxyArea; 
 }
 
 /** The middle of the depth-1 points (the board contents). */
+/**
+ * Moves the camera along the tour (tour.ts) at one fixed speed, from the whole board, round the major stars, and back
+ * to the whole board. At the end the user has the camera again, looking at the middle of the board.
+ */
+function TourRunner({ model, controls, onEnd, onInfo }: { model: GalaxyModel; controls: RefObject<OrbitControlsImpl | null>; onEnd(): void; onInfo(text: string): void }) {
+  const { camera } = useThree();
+  // A change of the board (a store write) makes a new path; the tour goes on from the same part of it.
+  const tour = useMemo<Tour | null>(() => buildTour(model), [model]);
+  const u = useRef(0);
+  const look = useRef<Vector3 | null>(null);
+  const info = useRef("");
+  const ended = useRef(false);
+  // The speed is fixed for one tour: a part of the board size each second.
+  const speed = useRef<number | null>(null);
+  useEffect(() => {
+    if (tour === null) onEnd();
+  }, [tour, onEnd]);
+  useFrame((_state, delta) => {
+    if (tour === null || ended.current) return;
+    speed.current ??= Math.max(0.5, tour.boardRadius * 0.13);
+    // The first frame starts from where the camera is: it eases onto the path in the first second (no jump).
+    u.current += (speed.current * Math.min(delta, 0.05)) / tour.length;
+    if (u.current >= 1) {
+      ended.current = true;
+      if (controls.current !== null) {
+        controls.current.target.copy(tour.center);
+        controls.current.update();
+      }
+      onEnd();
+      return;
+    }
+    const position = tour.curve.getPointAt(u.current);
+    const blend = Math.min(1, u.current * tour.length / Math.max(1, tour.boardRadius * 0.3));
+    camera.position.lerp(position, blend < 1 ? 0.08 : 1);
+    const target = tourTarget(tour, u.current, position);
+    look.current ??= controls.current?.target.clone() ?? target.clone();
+    // Exponential smoothing: the look never jumps.
+    look.current.lerp(target, 1 - Math.exp(-Math.min(delta, 0.05) * 2.2));
+    camera.lookAt(look.current);
+    const stop = stopAt(tour, u.current);
+    const wide = position.distanceTo(tour.overview) < tour.boardRadius * 0.6;
+    // In the UI language here: the line shows a name of the user in it.
+    const text = wide ? t("The whole board") : stop !== null ? t("Circling: {0}", stop.point.label || stop.point.hoverLabel) : t("Cruising");
+    if (text !== info.current) {
+      info.current = text;
+      onInfo(text);
+    }
+  });
+  return null;
+}
+
+/** A soft glow around each dot while the tour runs (additive light, as stars). */
+function Glow({ points, colors }: { points: readonly GalaxyPoint[]; colors: Colors }) {
+  const texture = useMemo(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 64;
+    const context = canvas.getContext("2d")!;
+    const gradient = context.createRadialGradient(32, 32, 0, 32, 32, 32);
+    gradient.addColorStop(0, "rgba(255,255,255,0.9)");
+    gradient.addColorStop(0.3, "rgba(255,255,255,0.25)");
+    gradient.addColorStop(1, "rgba(255,255,255,0)");
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, 64, 64);
+    return new CanvasTexture(canvas);
+  }, []);
+  useEffect(() => () => texture.dispose(), [texture]);
+  return (
+    <>
+      {points.map((point) => (
+        <sprite key={`glow:${point.key}`} position={point.position} scale={radiusOf(point) * (point.depth === 1 ? 5 : 3.5)}>
+          <spriteMaterial map={texture} color={glowColor(point, colors)} transparent depthWrite={false} blending={AdditiveBlending} opacity={point.depth === 1 ? 0.9 : 0.6} />
+        </sprite>
+      ))}
+    </>
+  );
+}
+
+/** The color of the glow of a dot: the color of its shape. */
+function glowColor(point: GalaxyPoint, colors: Colors): string {
+  if (point.kind === "group") return point.groupType === "calendar" ? GROUP_COLORS.calendar : point.groupType === "radial" ? GROUP_COLORS.radial : GROUP_COLORS.outline;
+  if (point.isBoard) return colors.item;
+  const object = OBJECT_LOOKS[point.view];
+  if (object !== undefined) return object.color;
+  return point.view === "note" ? colors.note : point.view === "page" ? colors.page : colors.text;
+}
+
 function contentCenter(model: GalaxyModel): Vector3 {
   const top = model.points.filter((point) => point.depth === 1);
   const center = new Vector3();

@@ -1,5 +1,5 @@
 // Live preview for Markdown. See docs/SPEC.md section 7.5.
-// Marks (#, *, `, [](...)) are hidden on lines without the cursor.
+// Marks (#, *, `, [](...)) are hidden on lines without the cursor. Lines of "---" or "===" always show.
 // Only decorations change. The text stays byte for byte the same.
 
 import { syntaxTree } from "@codemirror/language";
@@ -57,6 +57,8 @@ function buildDecorations(view: EditorView): DecorationSet {
         // "[text]" without a target is plain text: no link style, and its brackets stay.
         if (name === "Link" && !isRealLink(node.node)) return;
         if (name === "LinkMark" && node.node.parent?.name === "Link" && !isRealLink(node.node.parent)) return;
+        // A line of "---" or "===" under a text line (a setext heading in Markdown) stays: it is not a "#" mark.
+        if (name === "HeaderMark" && node.node.parent?.name.startsWith("SetextHeading") === true) return;
         const style = STYLE_OF_NODE[name];
         if (style !== undefined && node.to > node.from) {
           ranges.push(Decoration.mark({ class: style }).range(node.from, node.to));

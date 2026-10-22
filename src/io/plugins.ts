@@ -87,7 +87,12 @@ export function readProgress(value: unknown): PluginProgress | null {
 }
 
 /** A sentence to read aloud. `start` and `end` are string indexes (UTF-16) in the text. `speech` is the text to say. */
-export type Sentence = { start: number; end: number; speech: string };
+/**
+ * A sentence to read: its range in the text, and its words. `parts`: the words in parts, when a part is a formula
+ * (the voice says formulas slower). The parts joined are `speech`.
+ */
+export type Sentence = { start: number; end: number; speech: string; parts?: SpeechPart[] };
+export type SpeechPart = { text: string; formula: boolean };
 
 /** The sentences of a "sentences" reply. Bad or overlapping ranges are dropped. */
 export function readSentences(value: unknown, textLength: number): Sentence[] {

@@ -1,0 +1,55 @@
+/* The sorting tray: bottom left of a sorting map, in the look of the link bench (blurred). Almost opaque: its text must
+   be readable on any board background (a dark board under a light theme, and the other way round). */
+/* Right of the zoom buttons of the board (bottom left, 28 px wide + margin). */
+.sorting-tray { position: absolute; left: 56px; bottom: 15px; z-index: 40; font-size: 13px; color: var(--text); }
+.sorting-tray.folded {
+  width: 48px; height: 48px; border-radius: 50%; border: 1px solid var(--border); padding: 0;
+  background: color-mix(in srgb, var(--panel) 90%, transparent); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  color: var(--accent); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28); display: grid; place-items: center; cursor: pointer;
+}
+.sorting-tray-badge { position: absolute; top: -4px; right: -4px; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 9px; background: var(--accent); color: #fff; font-size: 11px; line-height: 18px; text-align: center; }
+.sorting-tray.open {
+  width: min(340px, calc(100vw - 24px)); background: color-mix(in srgb, var(--panel) 90%, transparent);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.32); overflow: hidden;
+}
+.sorting-tray-head { display: flex; align-items: center; gap: 6px; padding: 6px 8px 6px 12px; border-bottom: 1px solid var(--border); color: var(--accent); }
+.sorting-tray-title { font-weight: 600; color: var(--text); }
+.sorting-tray-count { flex: 1; font-size: 11px; }
+.sorting-tray-body { display: grid; gap: 10px; padding: 10px; }
+.sorting-tray-pull { display: flex; align-items: center; gap: 10px; }
+.sorting-tray-pull .primary { display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; font-weight: 600; }
+.sorting-tray-number { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); }
+.sorting-tray-number input { width: 56px; }
+.sorting-tray-section { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.sorting-tray-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-right: 4px; }
+.sorting-tray-chip { display: inline-flex; align-items: center; gap: 2px; max-width: 100%; padding: 1px 2px 1px 8px; border: 1px solid var(--border); border-radius: 10px; font-size: 12px; }
+.sorting-tray-chip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sorting-tray-thrown-head { display: flex; align-items: center; gap: 4px; padding: 2px 0; border: 0; background: none; color: var(--text-muted); font: inherit; font-size: 12px; cursor: pointer; }
+.sorting-tray-thrown-head:disabled { cursor: default; color: var(--text-muted); opacity: 0.75; }
+.sorting-tray-thrown { list-style: none; margin: 0; padding: 0; max-height: 180px; overflow: auto; display: grid; gap: 2px; }
+.sorting-tray-thrown li { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.sorting-tray-thrown li > span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sorting-tray-message { padding: 6px 12px 10px; font-size: 12px; color: var(--text-muted); }
+/* A card on a sorting map: the real card (its kind and color), with a dashed edge: it is a reference. */
+.card.sorted-ref { outline: 1px dashed color-mix(in srgb, var(--text) 45%, transparent); outline-offset: 3px; }
+.sorting-tray-chip.lost { gap: 4px; color: var(--accent); }
+/* The Lost and found line at the top of the trash (TrashDialog.tsx). */
+.trash-lost { display: flex; align-items: center; gap: 10px; padding: 0 2px 8px; }
+.trash-lost button { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; white-space: nowrap; }
+/* Processing maps (SPEC 7.16): the chip in the head, and the "Detach" question. */
+.sorting-tray-chip.processing { gap: 4px; padding-right: 8px; color: var(--accent); font-size: 11px; }
+.sorting-tray-attach { padding: 1px 8px; font-size: 11px; border-radius: 10px; }
+.sorting-tray-detach-warning { color: var(--warning, #e0a040); }
+.sorting-tray-detach { display: grid; gap: 6px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; font-size: 12px; }
+.sorting-tray-detach-buttons { display: flex; gap: 8px; }
+/* Icons and text of the tray follow the panel, never the board under it. */
+.sorting-tray.open, .sorting-tray.open button:not(.primary) { color: var(--text); }
+.sorting-tray.open .icon-button { color: var(--text-muted); }
+.sorting-tray.open .icon-button:hover:not(:disabled) { color: var(--text); }
+/* New in the sources since the last visit: a dot on the folded tray, and a line with "Pull new". */
+.sorting-tray-new-dot { position: absolute; bottom: 2px; right: 2px; width: 10px; height: 10px; border-radius: 50%; background: #ffd60a; box-shadow: 0 0 0 2px var(--panel); }
+.sorting-tray-new { display: flex; align-items: center; gap: 8px; }
+.sorting-tray-new .sorting-tray-thrown-head { flex: 1; min-width: 0; color: var(--text); }
+.sorting-tray-new .sorting-tray-thrown-head span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sorting-tray-pull-new { flex: none; font-size: 12px; padding: 2px 10px; border: 1px solid var(--border); }

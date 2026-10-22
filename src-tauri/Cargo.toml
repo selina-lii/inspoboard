@@ -21,6 +21,14 @@ serde_json = "1.0"
 # No default features: no HTTPS, no SSH. The app has no network code (SPEC P6).
 git2 = { version = "0.20", default-features = false, features = ["vendored-libgit2"] }
 notify-debouncer-mini = "0.6"
+# PDF pages drawn natively (pdf_pages.rs). The PDFium library itself is a resource (scripts/fetch-pdfium.mjs).
+pdfium-render = "0.8.37"
+image = { version = "0.25", default-features = false, features = ["png", "tiff"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Reading images from the system clipboard (clipboard.rs). The same versions as Tauri uses.
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSPasteboard", "NSPasteboardItem"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSURL", "NSData", "NSArray"] }
 
 [dev-dependencies]
 tempfile = "3"

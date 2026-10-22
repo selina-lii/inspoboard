@@ -1,6 +1,7 @@
 // Shows an error in one view instead of a blank window. The data is not affected:
 // the store and the save cycle are outside React.
 
+import { logError } from "./debugLog";
 import { Component, type ErrorInfo, type ReactNode } from "react";
 
 type Props = { children: ReactNode; resetKey?: unknown };
@@ -15,6 +16,7 @@ export class ErrorBoundary extends Component<Props, State> {
 
   override componentDidCatch(error: Error, info: ErrorInfo): void {
     console.error("View error:", error, info.componentStack);
+    logError("View error", error);
   }
 
   override componentDidUpdate(previous: Props): void {

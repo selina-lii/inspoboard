@@ -2,18 +2,20 @@
 
 import { createPortal } from "react-dom";
 import { usePageToolSlot } from "../app/pageToolSlot";
-import { ArrowLeft, ArrowRight, ChevronLeft, ChevronRight, Link2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, ChevronLeft, ChevronRight, ImagePlus, Link2, LocateFixed } from "lucide-react";
 import { linksOf, type LinkEnd } from "../app/textLinks";
 import { useWorkspaceActions } from "../app/workspaceActions";
-import { useCallback, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import { PAGE_WIDTH_RANGE } from "../../io/settings";
-import { renameItem } from "../../core/actions";
+import { renameItem, setItemSubtitle } from "../../core/actions";
 import { neighbors } from "../../core/outline";
 import type { Id } from "../../core/types";
 import { CommitField } from "../app/fields";
 import { useRunCommand, useSession, useSessionState, useStoreRevision } from "../app/sessionContext";
 import type { TextEditorApi } from "../editor/TextEditor";
-import { useHiddenOverlay, useOverlay } from "../plugins/pluginsContext";
+import { cursorOf } from "../editor/selections";
+import { useHiddenOverlay, useOverlay, usePlugins } from "../plugins/pluginsContext";
+import { FormulaButton } from "../plugins/FormulaButton";
 import { HiddenTransformChip, TransformedChip } from "../plugins/TransformedText";
 import { ItemBody } from "./ItemBody";
 import { announceNewComment, CommentButtons, CommentColumn, smallItemCommand, useCommentColumn } from "./CommentColumn";
@@ -21,6 +23,7 @@ import { useSmallTool, usedSmallTool, type TextAnchor } from "../app/smallTool";
 import { isPageHome } from "../../core/inside";
 import { MarksProvider, MarkTools, PageScribbleLayer } from "./marks";
 import { DuplicateWarning } from "./DuplicateWarning";
+import { FrozenBar } from "../plugins/tray/FrozenBar";
 import { ItemInfo } from "./ItemInfo";
 import "./windows.css";
 
@@ -32,22 +35,30 @@ type Props = {
 };
 
 export function TextPage({ itemId, parentId, onOpenSibling }: Props) {
+  const plugins = usePlugins();
   const session = useSession();
   const { readOnly, settings } = useSessionState();
   const runCommand = useRunCommand();
   useStoreRevision();
   const editor = useRef<TextEditorApi | null>(null);
+  // A page that had a cursor before (in this run of the app): the cursor comes back, ready for typing.
+  const focusOnOpen = useMemo(() => cursorOf(itemId) !== undefined, [itemId]);
   const overlay = useOverlay(itemId);
   const hiddenOverlay = useHiddenOverlay(itemId);
   const item = session.store.get("items", itemId);
   const comments = useCommentColumn(itemId);
   const smallTool = useSmallTool();
   const toolSlot = usePageToolSlot();
+  const actions = useWorkspaceActions();
   // The scribbles use the whole width of the page. Their points start at the text area of the editor.
   const [pageElement, setPageElement] = useState<HTMLDivElement | null>(null);
   const textArea = useCallback(() => editor.current?.view()?.scrollDOM ?? null, []);
   // The width of the text: the setting, or the width during a drag of an edge.
   const [dragWidth, setDragWidth] = useState<number | null>(null);
+  // A page (not a board) can have a subtitle: Enter in the title opens its field. Empty, it folds away.
+  const isPage = !session.graph.isBoardItem(itemId);
+  const [subtitleOpen, setSubtitleOpen] = useState(false);
+  const openSubtitle = () => setSubtitleOpen(true);
   const pageWidth = dragWidth ?? settings.pageWidth;
   /** A drag on an edge of the text. The text is centered: it grows at both sides, so the width changes two times the drag. */
   const onResize = (side: -1 | 1) => (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -101,6 +112,8 @@ export function TextPage({ itemId, parentId, onOpenSibling }: Props) {
   if (item === undefined) {
     return <div className="text-page muted">This item does not exist. It is a ghost: its links stay in the graph.</div>;
   }
+  // The formula notes button: with a "math-text" plugin (it gives the words).
+  const hasMathPlugin = plugins.plugins.some((plugin) => plugin.details !== null && plugin.capabilities.includes("math-text"));
   // Side by side: the text stays (and can be edited) at the left.
   const side = overlay !== undefined && settings.transformLayout === "side";
   const tools = (
@@ -111,34 +124,62 @@ export function TextPage({ itemId, parentId, onOpenSibling }: Props) {
       <button className="icon-button" data-tip="Link selected text (⌘K)" data-tip-end disabled={readOnly || (overlay !== undefined && !side)} onClick={() => editor.current?.linkSelection()}>
         <Link2 size={16} />
       </button>
+      <button className="icon-button" data-tip="Insert image" data-tip-end disabled={readOnly || (overlay !== undefined && !side)} onClick={() => editor.current?.insertImage()}>
+        <ImagePlus size={16} />
+      </button>
+      {hasMathPlugin && <FormulaButton />}
+      <button className="icon-button" data-tip="Show file location" data-tip-end disabled={session.graph.homeOf(itemId) === undefined} onClick={() => actions.showLocation(itemId)}>
+        <LocateFixed size={16} />
+      </button>
     </span>
   );
   return (
     <MarksProvider itemId={itemId} pageLayer={!side}>
-    <div ref={setPageElement} data-page-id={itemId} onPointerDownCapture={placeSmallItem} className={`text-page${side ? " wide" : ""}${comments.shown ? " with-comments" : ""}${smallTool !== null && !readOnly ? " placing" : ""}`} style={{ "--page-width": `${pageWidth}px` } as CSSProperties}>
+    <div ref={setPageElement} data-page-id={itemId} onPointerDownCapture={placeSmallItem} className={`text-page${side ? " wide" : ""}${comments.shown ? " with-comments" : ""}${smallTool !== null && !readOnly ? " placing" : ""}${settings.formulaNotes ? " formula-notes" : ""}`} style={{ "--page-width": `${pageWidth}px` } as CSSProperties}>
       {!side && pageElement !== null && <PageScribbleLayer page={pageElement} textArea={textArea} />}
       <div className="text-page-head">
         <PageNavigation itemId={itemId} parentId={parentId} onOpenSibling={onOpenSibling} />
-        {settings.showItemTitle && overlay !== undefined && !side ? (
-          <span className="text-page-title" dir="auto">{overlay.title ?? item.name}</span>
-        ) : settings.showItemTitle ? (
-          <CommitField
-          className={`text-page-title${item.codeName === true ? " code-name" : ""}`}
-          wrap
-          value={item.name}
-          placeholder="Untitled"
-          disabled={readOnly}
-          onCommit={(name) => runCommand(renameItem(session.context, itemId, name.trim()))}
-          />
-        ) : (
-          <span className="text-page-title" />
-        )}
+        {/* The title, and under it the subtitle of a page (Enter in the title opens it; empty, it folds away). */}
+        <div className="text-page-titles">
+          {settings.showItemTitle && overlay !== undefined && !side ? (
+            <span className="text-page-title" dir="auto">{overlay.title ?? item.name}</span>
+          ) : settings.showItemTitle ? (
+            <CommitField
+            className={`text-page-title${item.codeName === true ? " code-name" : ""}`}
+            wrap
+            value={item.name}
+            placeholder="Untitled"
+            disabled={readOnly}
+            onCommit={(name) => runCommand(renameItem(session.context, itemId, name.trim()))}
+            // A page: Enter goes on to its subtitle.
+            onEnter={isPage ? openSubtitle : undefined}
+            />
+          ) : (
+            <span className="text-page-title" />
+          )}
+          {settings.showItemTitle && isPage && (item.subtitle !== undefined || subtitleOpen) && (
+            <CommitField
+              key={subtitleOpen ? "open" : "shown"}
+              className="text-page-subtitle"
+              wrap
+              value={item.subtitle ?? ""}
+              placeholder="Subtitle…"
+              disabled={readOnly || (overlay !== undefined && !side)}
+              autoFocus={subtitleOpen}
+              onCommit={(text) => runCommand(setItemSubtitle(session.context, itemId, text))}
+              onDone={() => setSubtitleOpen(false)}
+              // Enter goes on to the text. An empty subtitle folds away.
+              onEnter={() => editor.current?.focus()}
+            />
+          )}
+        </div>
         {overlay !== undefined && <TransformedChip itemId={itemId} overlay={overlay} />}
         {hiddenOverlay !== undefined && <HiddenTransformChip itemId={itemId} overlay={hiddenOverlay} />}
         {/* The tools of the page are in the main tool bar: the title has the width of the head. */}
         {toolSlot === null ? tools : createPortal(tools, toolSlot)}
       </div>
       <DuplicateWarning itemId={itemId} />
+      <FrozenBar itemId={itemId} />
       {settings.showItemDates && (
         <div className="text-page-info">
           <ItemInfo itemId={itemId} />
@@ -151,7 +192,7 @@ export function TextPage({ itemId, parentId, onOpenSibling }: Props) {
             <div className="page-resize right" data-tip="Drag to change the page width" data-tip-end onPointerDown={onResize(1)} onDoubleClick={() => void session.updateSettings({ pageWidth: 760 })} />
           </>
         )}
-        <ItemBody itemId={itemId} readOnly={readOnly} editorRef={editor} />
+        <ItemBody itemId={itemId} readOnly={readOnly} editorRef={editor} autoFocus={focusOnOpen} />
         <PageLinks itemId={itemId} />
         {/* The comments sit right at the edge of the text, and scroll with it. */}
         {comments.shown && <CommentColumn itemId={itemId} editorRef={editor} />}

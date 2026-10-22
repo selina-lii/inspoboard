@@ -8,22 +8,26 @@ export const NOTES_VERSION = 1;
 export const NOTE_COLORS = ["yellow", "green", "pink", "blue"] as const;
 export type NoteColor = (typeof NOTE_COLORS)[number];
 
-/** A highlight: a range of the page text (see webText.ts) and the text it had, to find it again if the ranges move. */
-export type WebHighlight = { id: string; start: number; end: number; quote: string; color: NoteColor };
+/**
+ * A highlight: a range of the page text (see webText.ts) and the text it had, to find it again if the ranges move.
+ * `boxes` (PDF, optional): where it is on the pages, as Zotero keeps a PDF highlight (page and rectangles): each box is
+ * [page, left, top, width, height] in PDF page units (scale 1, from the top left of the page). A highlight with boxes
+ * shows there, whatever the zoom or the text index; one without boxes (older ones) is found by its text.
+ * `rest`: fields that this version does not know (kept as they are).
+ */
+export type PageBox = [number, number, number, number, number];
+export type WebHighlight = { id: string; start: number; end: number; quote: string; color: NoteColor; boxes?: PageBox[]; rest?: Record<string, unknown> };
 /** A scribble: points in page coordinates (CSS pixels from the top left of the page). */
 export type WebScribble = { id: string; points: [number, number][]; color: NoteColor; width: number };
 /**
- * A comment or a note on the page canvas: in a margin or on the page. Its position is in page coordinates
- * (a margin left of the page has negative x). `created`: an ISO time.
- */
-export type MarginItem = { id: string; kind: "comment" | "note"; x: number; y: number; w: number; text: string; color: NoteColor; author?: string; created: string };
-/**
  * The notes of a page. Optional (old files do not have them):
- * - `items`: comments and notes on the page canvas.
  * - `margin`: the width of each margin that the user set (page units). Without it, the reader finds a width.
  * - `width`: the width at which the reader shows a web page. The text flows the same each time, so scribbles stay on their words.
+ * - `items`: format 1 kept comments and notes here. The migration made them vault items (inside links); entries that it
+ *   could not read stay. The app does not show them, but it keeps them as they are (and all other unknown fields, in
+ *   `rest`): a save never removes data that it does not know.
  */
-export type WebNotes = { version: number; highlights: WebHighlight[]; scribbles: WebScribble[]; items: MarginItem[]; margin?: number; width?: number };
+export type WebNotes = { version: number; highlights: WebHighlight[]; scribbles: WebScribble[]; items: unknown[]; margin?: number; width?: number; rest?: Record<string, unknown> };
 
 export const EMPTY_NOTES: WebNotes = { version: NOTES_VERSION, highlights: [], scribbles: [], items: [] };
 export const MARGIN_RANGE = { min: 0, max: 2000 };
@@ -102,10 +106,16 @@ export function readNotes(text: string | null): WebNotes {
   const record = (typeof value === "object" && value !== null ? value : {}) as Record<string, unknown>;
   const isColor = (color: unknown): color is NoteColor => NOTE_COLORS.includes(color as NoteColor);
   const highlights = (Array.isArray(record.highlights) ? record.highlights : []).flatMap((entry): WebHighlight[] => {
-    const { id, start, end, quote, color } = (entry ?? {}) as Record<string, unknown>;
+    const { id, start, end, quote, color, boxes, ...rest } = (entry ?? {}) as Record<string, unknown>;
     if (typeof id !== "string" || !Number.isInteger(start) || !Number.isInteger(end) || typeof quote !== "string") return [];
     if ((start as number) < 0 || (end as number) <= (start as number)) return [];
-    return [{ id, start: start as number, end: end as number, quote, color: isColor(color) ? color : "yellow" }];
+    const highlight: WebHighlight = { id, start: start as number, end: end as number, quote, color: isColor(color) ? color : "yellow" };
+    const valid = Array.isArray(boxes)
+      ? boxes.filter((box): box is PageBox => Array.isArray(box) && box.length === 5 && box.every((part) => typeof part === "number" && Number.isFinite(part)) && Number.isInteger(box[0]) && box[0] >= 1)
+      : [];
+    if (valid.length > 0) highlight.boxes = valid;
+    if (Object.keys(rest).length > 0) highlight.rest = rest;
+    return [highlight];
   });
   const scribbles = (Array.isArray(record.scribbles) ? record.scribbles : []).flatMap((entry): WebScribble[] => {
     const { id, points, color, width } = (entry ?? {}) as Record<string, unknown>;
@@ -115,14 +125,10 @@ export function readNotes(text: string | null): WebNotes {
     return [{ id, points: valid, color: isColor(color) ? color : "yellow", width: typeof width === "number" && width > 0 && width <= 40 ? width : 3 }];
   });
   const finite = (part: unknown): part is number => typeof part === "number" && Number.isFinite(part);
-  const items = (Array.isArray(record.items) ? record.items : []).flatMap((entry): MarginItem[] => {
-    const { id, kind, x, y, w, text, color, author, created } = (entry ?? {}) as Record<string, unknown>;
-    if (typeof id !== "string" || (kind !== "comment" && kind !== "note") || !finite(x) || !finite(y) || typeof text !== "string") return [];
-    const item: MarginItem = { id, kind, x, y, w: finite(w) && w >= 40 && w <= 2000 ? w : 200, text, color: isColor(color) ? color : "yellow", created: typeof created === "string" ? created : "" };
-    if (typeof author === "string" && author !== "") item.author = author;
-    return [item];
-  });
+  const items = Array.isArray(record.items) ? record.items : [];
   const notes: WebNotes = { version: NOTES_VERSION, highlights, scribbles, items };
+  const { version: _version, highlights: _highlights, scribbles: _scribbles, items: _items, margin: _margin, width: _width, ...rest } = record;
+  if (Object.keys(rest).length > 0) notes.rest = rest;
   const { margin, width } = record;
   if (finite(margin) && margin >= MARGIN_RANGE.min && margin <= MARGIN_RANGE.max) notes.margin = margin;
   if (finite(width) && width >= WIDTH_RANGE.min && width <= WIDTH_RANGE.max) notes.width = width;
@@ -130,8 +136,9 @@ export function readNotes(text: string | null): WebNotes {
 }
 
 export function encodeNotes(notes: WebNotes): string {
-  const { highlights, scribbles, items, margin, width } = notes;
-  return `${JSON.stringify({ version: NOTES_VERSION, highlights, scribbles, items, margin, width }, null, 1)}\n`;
+  const { highlights, scribbles, items, margin, width, rest } = notes;
+  const saved = highlights.map(({ rest: own, ...highlight }) => ({ ...own, ...highlight }));
+  return `${JSON.stringify({ ...rest, version: NOTES_VERSION, highlights: saved, scribbles, items, margin, width }, null, 1)}\n`;
 }
 
 /**
@@ -155,13 +162,25 @@ export function findQuote(text: string, quote: string, near = 0): { start: numbe
     if (best === null || Math.abs(at - near) < Math.abs(best - near)) best = at;
   }
   if (best !== null) return { start: best, end: best + quote.length };
-  const words = quote.trim().split(/\s+/).map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-  const pattern = new RegExp(words.join("\\s*"), "g");
+  const pattern = loosePattern(quote);
   let found: { start: number; end: number } | null = null;
   for (const match of text.matchAll(pattern)) {
     if (found === null || Math.abs(match.index - near) < Math.abs(found.start - near)) found = { start: match.index, end: match.index + match[0].length };
   }
   return found;
+}
+
+/** The pattern of a quote with any spaces (see findQuote). Kept: the same quotes are looked for at each render. */
+const loosePatterns = new Map<string, RegExp>();
+function loosePattern(quote: string): RegExp {
+  let pattern = loosePatterns.get(quote);
+  if (pattern === undefined) {
+    if (loosePatterns.size > 500) loosePatterns.clear();
+    const words = quote.trim().split(/\s+/).map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    pattern = new RegExp(words.join("\\s*"), "g");
+    loosePatterns.set(quote, pattern);
+  }
+  return pattern;
 }
 
 /** An SVG path for scribble points. */

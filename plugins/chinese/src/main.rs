@@ -3,7 +3,7 @@
 //! - Protocol: JSON lines on stdin and stdout (see docs/PLUGINS.md in the app repository).
 //! - Capability "convert-text": the app calls "transform" and writes the result into the item names and texts
 //!   (one command; undo gives the texts back). Each character (or fixed phrase) is replaced: no translation.
-//! - Text that is not Chinese stays as it is.
+//! - Text that is not Chinese stays as it is. Notations (punctuation and symbols, for example 「」) stay as they are.
 //! - The rules (OpenCC and MediaWiki) are in the program. No network, no files.
 
 use std::io::{BufRead, Write};
@@ -65,11 +65,32 @@ fn convert_line(line: &str, variant: Variant) -> String {
     let mut rest = line;
     while let Some(start) = rest.find("](") {
         let Some(length) = rest[start + 2..].find(')') else { break };
-        out.push_str(&zhconv(&rest[..start + 2], variant));
+        out.push_str(&convert_words(&rest[..start + 2], variant));
         out.push_str(&rest[start + 2..start + 2 + length + 1]);
         rest = &rest[start + 2 + length + 1..];
     }
-    out.push_str(&zhconv(rest, variant));
+    out.push_str(&convert_words(rest, variant));
+    out
+}
+
+/// Converts the letters of a text. The notations (each character that is not a letter, a digit or a space) stay as
+/// they are: the rules would change 「」 into “” in Simplified Chinese.
+fn convert_words(text: &str, variant: Variant) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut start = 0;
+    for (index, character) in text.char_indices() {
+        if character.is_alphanumeric() || character.is_whitespace() {
+            continue;
+        }
+        if start < index {
+            out.push_str(&zhconv(&text[start..index], variant));
+        }
+        out.push(character);
+        start = index + character.len_utf8();
+    }
+    if start < text.len() {
+        out.push_str(&zhconv(&text[start..], variant));
+    }
     out
 }
 
@@ -110,6 +131,12 @@ mod tests {
         assert_eq!(convert("繁體中文", Variant::ZhHans), "繁体中文");
         let text = "# 头发\n[链接](https://例子.com/头)\n```\n头发\n```\nEnglish stays.";
         assert_eq!(convert(text, Variant::ZhHant), "# 頭髮\n[鏈接](https://例子.com/头)\n```\n头发\n```\nEnglish stays.");
+    }
+
+    #[test]
+    fn keeps_notations() {
+        assert_eq!(convert("「繁體」與『引號』", Variant::ZhHans), "「繁体」与『引号』");
+        assert_eq!(convert("“简体”", Variant::ZhHant), "“簡體”");
     }
 
     #[test]

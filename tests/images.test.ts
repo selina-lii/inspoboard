@@ -22,10 +22,16 @@ describe("images in a text", () => {
   });
 
   it("keeps the width of an image in its alt text, as in Obsidian", () => {
-    expect(imageAlt("sky|320")).toEqual({ alt: "sky", width: 320 });
-    expect(imageAlt("|320x200")).toEqual({ alt: "", width: 320 });
-    expect(imageAlt("a | b")).toEqual({ alt: "a | b", width: null });
-    expect(imageAlt("sky")).toEqual({ alt: "sky", width: null });
+    expect(imageAlt("sky|320")).toEqual({ alt: "sky", width: 320, place: null });
+    expect(imageAlt("|320x200")).toEqual({ alt: "", width: 320, place: null });
+    expect(imageAlt("a | b")).toEqual({ alt: "a | b", width: null, place: null });
+    expect(imageAlt("sky")).toEqual({ alt: "sky", width: null, place: null });
+    // Place at a side (after the width).
+    expect(imageAlt("sky|320|right")).toEqual({ alt: "sky", width: 320, place: "right" });
+    expect(imageAlt("sky|Left")).toEqual({ alt: "sky", width: null, place: "left" });
+    expect(imageAlt("|left")).toEqual({ alt: "", width: null, place: "left" });
+    expect(imageMarkdown("images/sky.png", "sky", 320, "right")).toBe("![sky|320|right](images/sky.png)");
+    expect(imageMarkdown("images/sky.png", "", null, "left")).toBe("![|left](images/sky.png)");
     expect(imageMarkdown("images/sky.png", "sky", 319.6)).toBe("![sky|320](images/sky.png)");
     expect(imageMarkdown("images/sky.png", "a|b")).toBe("![a b](images/sky.png)");
     expect(previewOf("![sky|320](images/sky.png)")).toBe("[sky]");

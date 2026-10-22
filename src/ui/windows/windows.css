@@ -32,6 +32,12 @@
 /* A long page name wraps: the whole name shows. */
 .text-page-title.wrap-field { resize: none; overflow: hidden; line-height: 1.25; font-family: inherit; color: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
 span.text-page-title { white-space: normal; overflow-wrap: anywhere; }
+/* The title and the subtitle of a page: one column, the subtitle right under the title, gray and italic (as the source of a quote). */
+.text-page-titles { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.text-page-titles .text-page-title { flex: none; width: 100%; }
+.text-page-subtitle { width: 100%; font-size: 16px; font-style: italic; color: var(--text-muted); background: transparent; border-color: transparent; }
+.text-page-subtitle.wrap-field { resize: none; overflow: hidden; line-height: 1.35; font-family: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
+.text-page-subtitle:hover, .text-page-subtitle:focus { border-color: var(--border); }
 .text-page-body { width: min(var(--page-width, 760px), 100%); flex: 1; }
 /* The edges of the text: a drag changes the page width (setting "pageWidth"). A double-click: 760 px. */
 .page-resize { position: absolute; top: 0; bottom: 0; width: 8px; z-index: 3; cursor: col-resize; touch-action: none; }
@@ -182,6 +188,12 @@ span.text-page-title { white-space: normal; overflow-wrap: anywhere; }
 /* A sized image keeps its shape: no height limit. */
 .cm-md-image-frame img[style*="width"] { max-height: none; }
 
+/* An image placed at a side: the next lines of text go beside it (at most half the text width unless sized). */
+.cm-md-image.place-left, .cm-md-image.place-right { max-width: 50%; margin: 4px 0 8px; }
+.cm-md-image.place-left { float: left; margin-right: 16px; }
+.cm-md-image.place-right { float: right; margin-left: 16px; }
+.cm-md-image.place-left:has(img[style*="width"]), .cm-md-image.place-right:has(img[style*="width"]) { max-width: calc(100% - 120px); }
+
 /* The hover card of a link to an item (src/ui/editor/linkCard.ts). */
 .cm-tooltip.cm-tooltip-hover:has(.cm-link-card) { border: none; background: transparent; }
 .cm-link-card { max-width: 320px; padding: 8px 10px; display: grid; gap: 3px; background: var(--bg-panel); color: var(--text); border: 1px solid var(--border-strong); border-radius: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35); font-family: var(--font-ui); font-size: 12px; }
@@ -217,14 +229,69 @@ span.text-page-title { white-space: normal; overflow-wrap: anywhere; }
 .anchor-curves circle { fill: var(--text-muted); fill-opacity: 0.4; }
 .anchor-curves g.hot path { stroke: var(--accent); stroke-opacity: 0.9; stroke-width: 1.5; }
 .anchor-curves g.hot circle { fill: var(--accent); fill-opacity: 0.9; }
+.anchor-curves g.link path { stroke-opacity: 0.6; stroke-dasharray: 4 3; }
+.anchor-curves marker path { fill: var(--text-muted); fill-opacity: 0.7; stroke: none; }
 /* Small items of other kinds in a page: a note card with the color of the kind (or of the item). */
 .page-note { border-left: 3px solid var(--small-color, var(--note-border)); }
-.page-small-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%; }
-.page-small.kind-todo { --small-color: #f4ff3a; }
-.page-small.kind-quote .page-small-quote { font-style: italic; }
-.page-small.kind-quote .page-small-quote::before { content: "“"; }
-.page-small.kind-quote .page-small-quote::after { content: "”"; }
-.page-small.kind-weblink { --small-color: var(--link, #4a90e2); }
+/* Each kind looks as its card on a board (app/smallFace.tsx; board.css .card.view-*). Same in a reader (.reader-item). */
+:is(.page-small, .reader-item).kind-todo { background: color-mix(in srgb, var(--small-color, #f4ff3a) 55%, transparent); border: 1px solid var(--small-color, #f4ff3a); color: #111; box-shadow: none; backdrop-filter: saturate(1.4); font-weight: 500; }
+:is(.page-small, .reader-item).kind-todo :is(.page-note-head, .reader-item-head, .icon-button.small, .untitled) { color: rgba(0, 0, 0, 0.55); }
+:is(.page-small, .reader-item).kind-flashcard { background: #6495ed; border: 1px solid #4a77d4; color: #fff; }
+:is(.page-small, .reader-item).kind-flashcard :is(.page-note-head, .reader-item-head, .icon-button.small, .untitled) { color: rgba(255, 255, 255, 0.75); }
+:is(.page-small, .reader-item).kind-quote { background: #f4eed9; border: 1px solid #e2d7b4; color: #3b3a36; font-family: "PT Serif", "Songti SC", "Songti TC", "Hiragino Mincho ProN", Georgia, serif; }
+:is(.page-small, .reader-item).kind-quote :is(.page-note-head, .reader-item-head, .icon-button.small, .untitled) { color: #7a7465; }
+:is(.page-small, .reader-item).kind-weblink { background: #0d2457; border: 1px solid #2f5fd0; color: #dbe6ff; }
+:is(.page-small, .reader-item).kind-weblink :is(.page-note-head, .reader-item-head, .icon-button.small, .untitled, .comment-link) { color: #8fb0ff; }
+:is(.page-small, .reader-item).kind-text { background: transparent; border-color: transparent; box-shadow: none; color: var(--text); }
+:is(.page-small, .reader-item).kind-text:hover { border-color: var(--border); }
+:is(.page-small, .reader-item).kind-text :is(.page-note-head, .reader-item-head, .icon-button.small, .untitled) { color: var(--text-muted); }
+.page-small:is(.kind-todo, .kind-flashcard, .kind-quote, .kind-weblink, .kind-text) { min-height: 0; }
+/* A small item with its own color (app/smallFace.tsx smallColorStyle): the color fills it, as a card on a board. A note
+   keeps its paper (the color is its stripe), and an action item its film (the color tints it). */
+:is(.page-small, .reader-item).custom-color:not(.kind-todo, .kind-note) { background: var(--small-fill); border-color: var(--small-fill); color: var(--small-text); }
+:is(.page-small, .reader-item).custom-color:not(.kind-todo, .kind-note) :is(.page-note-head, .reader-item-head, .icon-button.small, .untitled, .comment-link, .comment-author, .comment-time, .quote-mark) { color: inherit; opacity: 0.75; }
+.small-flash { position: relative; text-align: center; padding: 10px 4px 4px; }
+.small-flash-side { position: absolute; top: 0; left: 0; font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.75; }
+.small-flash-edit { position: absolute; top: -4px; right: -4px; opacity: 0; color: inherit; }
+.small-flash:hover .small-flash-edit, .small-flash-edit:focus-visible { opacity: 1; }
+.small-flash-face { font-size: 14px; font-weight: 600; line-height: 1.35; white-space: pre-wrap; overflow-wrap: anywhere; animation: flash-flip 0.28s ease; }
+.small-quote { position: relative; padding: 6px 20px 4px; display: flex; flex-direction: column; gap: 4px; }
+.small-quote .quote-text { font-size: 14px; }
+.small-quote .quote-mark { font-size: 22px; }
+.small-quote .quote-mark.open { top: -2px; left: 2px; }
+.small-quote .quote-mark.close { bottom: -2px; right: 2px; }
 /* The unlink button (stop pointing to text): it shows while the small item is hovered. */
 .page-object .unpoint-button { opacity: 0; }
 .page-object:hover .unpoint-button, .page-object .unpoint-button:focus-visible { opacity: 1; }
+/* Delete shows on hover too (one entry at a time: a reply shows only its own button). */
+.page-object .hover-only { opacity: 0; }
+.page-note:hover > .page-note-head .hover-only, .comment-entry:hover > .comment-head .hover-only, .comment-reply-entry:hover .hover-only, .page-object .hover-only:focus-visible { opacity: 1; }
+/* Formula notes in a page (editor/formulaNotes.ts): the words of the formulas of a line hang at the left of the line. */
+.text-page.formula-notes .cm-scroller { overflow: visible; }
+.cm-formula-anchor { position: relative; display: inline-block; width: 0; height: 0; vertical-align: top; }
+.cm-formula-note { position: absolute; right: 18px; top: 2px; width: 220px; font-size: 12px; line-height: 1.35; font-style: normal; font-weight: normal; color: var(--text); background: var(--bg-panel); border-right: 2px solid #8a92f2; border-radius: 4px 0 0 4px; padding: 3px 6px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15); white-space: normal; overflow-wrap: anywhere; user-select: none; }
+/* Shadows of linked items (app/linkShadow.tsx): faint cards with a dashed border, next to the linked passage. */
+.link-shadow { position: relative; display: flex; align-items: flex-start; gap: 2px; border: 1px dashed var(--border-strong); border-radius: var(--radius); background: color-mix(in srgb, var(--bg-panel) 55%, transparent); opacity: 0.85; font-size: 12px; }
+.link-shadow:hover { opacity: 1; border-color: var(--accent); }
+.link-shadow-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; padding: 4px 6px; text-align: left; background: none; border: none; color: var(--text-muted); cursor: pointer; }
+.link-shadow-head { display: flex; align-items: center; gap: 4px; color: var(--text); }
+.link-shadow-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link-shadow-quote { font-style: italic; overflow-wrap: anywhere; }
+.link-shadow-unlink, .link-shadow-board { opacity: 0; margin: 2px; }
+.link-shadow:hover .link-shadow-unlink, .link-shadow-unlink:focus-visible, .link-shadow:hover .link-shadow-board, .link-shadow-board:focus-visible { opacity: 1; }
+/* A link that shows on boards too: its eye stays visible. */
+.link-shadow-board.active { opacity: 0.7; }
+/* A linked passage, or a text that a small item points to: a faint translucent gray (a reader: web.css). */
+/* The app is dark by default: a light veil. In the light theme: a dark veil. */
+:root { --linked-text-bg: rgba(255, 255, 255, 0.13); }
+:root[data-theme="light"] { --linked-text-bg: rgba(0, 0, 0, 0.08); }
+.cm-linked-passage { background: var(--linked-text-bg); border-radius: 2px; }
+
+/* The size grip of a small item in a page or a reader (app/sizeGrip.tsx): bottom-right corner, on hover. */
+.size-grip { position: absolute; right: 0; bottom: 0; width: 12px; height: 12px; cursor: nwse-resize; opacity: 0; z-index: 2; background: linear-gradient(135deg, transparent 50%, currentColor 50%, currentColor 60%, transparent 60%, transparent 72%, currentColor 72%, currentColor 82%, transparent 82%); color: var(--text-faint); }
+.size-grip.only-y { cursor: ns-resize; }
+:is(.page-object, .reader-item):hover > .size-grip, .size-grip:active { opacity: 1; }
+.page-object { position: relative; }
+/* A small item with a size from the user: it fills its frame, and a longer text scrolls. */
+.page-object.sized > :first-child { height: 100%; box-sizing: border-box; overflow: auto; }
+.reader-item.sized > :not(.reader-item-head, .size-grip) { flex: 1 1 auto; min-height: 0; overflow: auto; }

@@ -1,13 +1,19 @@
 node_modules/
 dist/
 src-tauri/target/
+# PDFium library: scripts/fetch-pdfium.mjs gets it at build time.
+src-tauri/pdfium/
 # App-owned folder inside any vault (history, cache, lock).
 .inspoboard/
 # Plugins: built programs and language packs are large. Never commit them.
-plugins/*/target/
+plugins/**/target/
 # The math plugin build downloads the official Node program here.
 plugins/*/.cache/
 data/plugins/
 data/.preview/
 # PDF.js data files: copied from node_modules by scripts/copy_pdfjs.mjs.
 public/pdfjs/
+# macOS folder metadata (it can name your folders and files).
+.DS_Store
+# Backups that the app makes inside a vault (also of the test vault): copies, never commit them.
+.backup/

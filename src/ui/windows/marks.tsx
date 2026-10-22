@@ -18,6 +18,7 @@ import { useSession, useSessionState } from "../app/sessionContext";
 import { EMPTY_NOTES, encodeNotes, marksPath, NOTE_COLORS, pathOf, placeHighlight, readNotes, type NoteColor, type WebNotes } from "../web/savedPages";
 import type { MarkRange } from "../editor/marks";
 import { isTextTarget } from "../app/dom";
+import { COLOR_NAMES, INK } from "../web/readerBasics";
 
 export type MarkMode = "none" | "highlight" | "pen" | "erase" | "lasso";
 
@@ -53,9 +54,6 @@ export function useMarks(): MarksValue | null {
   return useContext(MarksContext);
 }
 
-export const INK: Record<NoteColor, string> = { yellow: "#e6b800", green: "#28a745", pink: "#ff375f", blue: "#0a84ff" };
-/** The names of the colors (tooltips). */
-const COLOR_NAMES: Record<NoteColor, string> = { yellow: "Yellow", green: "Green", pink: "Pink", blue: "Blue" };
 
 export function MarksProvider({ itemId, pageLayer = false, children }: { itemId: Id; pageLayer?: boolean; children: ReactNode }) {
   const session = useSession();

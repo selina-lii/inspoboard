@@ -1,5 +1,6 @@
 // The small items of a page: comments, notes, action items, flashcards, quotes, texts, and web links (SPEC 1.1).
-// A page is a medium-sized item: it holds small items (inside links, core/inside.ts; older vaults: `on` + `pageAt`).
+// A page is a medium-sized item: it holds small items (inside links, core/inside.ts). Other items keep attached
+// comments and notes (`on`, place `pageAt`).
 // - They show in the page only. On the board, the page card shows a dot while it has open comments.
 // - At first they are in a column tight at the right edge of the text (ordered by the place of their text, then by
 //   time). Drag the head of one to put it anywhere ([x, y] from the top-right corner of the text). A comment folds.
@@ -10,21 +11,24 @@
 //   too. On the board they show at the side of the card. Replies have no placement: they show in their thread.
 
 import { COMMENT_WIDTH_RANGE } from "../../io/settings";
-import { uiLocale } from "../i18n/i18n";
-import { Check, CheckCheck, ChevronDown, ChevronRight, Globe, Highlighter, Layers, MessageSquare, MessageSquarePlus, Quote, Reply, RotateCcw, StickyNote, Trash2, Type, Unlink } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState, type MutableRefObject } from "react";
-import { completeItems, createItemOnBoard, createReply, deleteThread, setPageAt, setResolved, writeText } from "../../core/actions";
+import { CheckCheck, ChevronDown, ChevronRight, Globe, MessageSquare, MessageSquarePlus, Reply, RotateCcw, StickyNote, Trash2, Unlink } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type MutableRefObject, type ReactNode } from "react";
+import { completeItems, createItemOnBoard, createReply, deleteThread, renameItem, setPageAt, setResolved, writeText } from "../../core/actions";
 import type { ActionContext } from "../../core/actions";
-import { createInside, insideEntries, isPageHome, moveInside, moveOut, pointInside, type InsideEntry } from "../../core/inside";
+import { colorInside, createInside, insideEntries, isPageHome, moveInside, moveOut, pointInside, resizeInside, type InsideEntry } from "../../core/inside";
+import { useSizeGrip } from "../app/sizeGrip";
 import type { Id, ItemRecord, ViewStyle } from "../../core/types";
 import type { TextEditorApi } from "../editor/TextEditor";
 import { findQuote } from "../web/savedPages";
+import { linkedPassageRange, linkedPassagesOf } from "../../core/linkEnds";
+import { LinkShadow } from "../app/linkShadow";
+import { shortTime, smallColorStyle, SmallFace, SmallHead } from "../app/smallFace";
 import { SmallItemButton, type TextAnchor } from "../app/smallTool";
 import { boardPointAt, pagePointAt } from "../app/boardDrop";
 import { useRunCommand, useSession, useSessionState, useStoreRevision } from "../app/sessionContext";
 import { useWorkspaceActions } from "../app/workspaceActions";
 import { benchSlotAt, hoverBench, sendToBench } from "../app/LinkBench";
-import { hostOf, ReplyInput } from "../board/nodes";
+import { hostOf, ReplyInput } from "../board/objectCards";
 import { fileNameOfPath, isLocalPath } from "../web/savedPages";
 
 const NEW_COMMENT_EVENT = "inspoboard-new-comment";
@@ -179,7 +183,7 @@ export function CommentColumn({ itemId, editorRef }: { itemId: Id; editorRef?: M
             onEdit={(on) => setEditing(on ? part.item.id : null)}
             onDelete={() => runCommand(deleteThread(session.context, part.item.id))}
             onDone={() => runCommand(completeItems(session.context, [part.item.id]))}
-            onOpenUrl={(url) => actions.jumpTo(url)}
+            onOpenUrl={(url) => actions.jumpTo(url, part.item.id)}
             onMove={move(part)}
             onOut={out(part)}
             onUnpoint={unpoint(part)}
@@ -196,6 +200,19 @@ export function CommentColumn({ itemId, editorRef }: { itemId: Id; editorRef?: M
     .map((object) => ({ object, place: textPlace(object.part) }))
     .sort((a, b) => (a.place !== b.place ? a.place - b.place : a.object.part.item.created < b.object.part.item.created ? -1 : a.object.part.item.created > b.object.part.item.created ? 1 : 0))
     .map(({ object }) => object);
+  // Shadows of linked items (SPEC 7.11): next to their passage, among the small items (by the place in the text).
+  const shadows = linkedPassagesOf(session.store, session.graph, itemId).flatMap((passage) => {
+    const range = linkedPassageRange(body, passage);
+    return range === null ? [] : [{ passage, place: range.from }];
+  });
+  const columnRows = [
+    ...inColumn.map((object) => ({ key: object.part.item.id, part: object.part as Part | null, place: textPlace(object.part), node: object.view, shadow: false })),
+    ...shadows.map(({ passage, place }) => ({ key: `link:${passage.linkId}`, part: null, place, node: <LinkShadow passage={passage} />, shadow: true })),
+  ].sort((a, b) => a.place - b.place);
+  const anchors: Anchor[] = [
+    ...[...shown, ...others].map((part) => ({ id: part.item.id, quote: part.quote, quoteAt: part.quoteAt })),
+    ...shadows.map(({ passage, place }) => ({ id: `link:${passage.linkId}`, quote: passage.quote, quoteAt: place })),
+  ];
   // The column width: a setting. A drag on its right edge changes it (saved on release).
   const [dragWidth, setDragWidth] = useState<number | null>(null);
   const width = dragWidth ?? settings.commentWidth;
@@ -228,17 +245,17 @@ export function CommentColumn({ itemId, editorRef }: { itemId: Id; editorRef?: M
       <aside className="comment-column" aria-label="Comments and notes" style={{ width }}>
         <span className="comment-resize" data-tip="Drag: change the width of the comments" onPointerDown={onResize} />
         {links.map((link) => (
-          <button key={link.id} className="comment-link" data-tip={link.url ?? ""} onClick={() => link.url !== undefined && actions.jumpTo(link.url)}>
+          <button key={link.id} className="comment-link" data-tip={link.url ?? ""} onClick={() => link.url !== undefined && actions.jumpTo(link.url, link.id)}>
             <Globe size={12} />
             <span>{link.name !== "" ? link.name : link.url === undefined ? "Link" : isLocalPath(link.url) ? fileNameOfPath(link.url) : hostOf(link.url)}</span>
           </button>
         ))}
-        {inColumn.map(({ part, view }) => (
-          <div key={part.item.id} className="page-object" data-item-id={part.item.id}>
-            {view}
-          </div>
+        {columnRows.map((row) => (
+          <PageObject key={row.key} part={row.part} className={`page-object${row.shadow ? " shadow" : ""}`} itemId={row.key} inColumn>
+            {row.node}
+          </PageObject>
         ))}
-        {comments.length === 0 && others.length === 0 && links.length === 0 && <div className="comment-empty">No comments. Select text and right-click → “Comment”, or use the small-item button.</div>}
+        {comments.length === 0 && others.length === 0 && links.length === 0 && shadows.length === 0 && <div className="comment-empty">No comments. Select text and right-click → “Comment”, or use the small-item button.</div>}
         {resolved.length > 0 && (
           <button className="comment-resolved-toggle" onClick={() => setShowResolved((value) => !value)}>
             {showResolved ? "Hide resolved" : `Show resolved (${resolved.length})`}
@@ -247,12 +264,35 @@ export function CommentColumn({ itemId, editorRef }: { itemId: Id; editorRef?: M
       </aside>
       {/* Small items that the user put somewhere: [x, y] from the top-right corner of the text. */}
       {placed.map(({ part, view }) => (
-        <div key={part.item.id} className="page-object placed" data-item-id={part.item.id} style={{ left: `calc(100% + ${part.at![0]}px)`, top: part.at![1], width }}>
+        <PageObject key={part.item.id} part={part} className="page-object placed" itemId={part.item.id} style={{ left: `calc(100% + ${part.at![0]}px)`, top: part.at![1], width }}>
           {view}
-        </div>
+        </PageObject>
       ))}
-      {editorRef !== undefined && <AnchorCurves parts={[...shown, ...others]} body={body} editorRef={editorRef} />}
+      {editorRef !== undefined && <AnchorCurves anchors={anchors} body={body} editorRef={editorRef} />}
     </>
+  );
+}
+
+/**
+ * The frame of a small item in a page: its place, and its size. An item inside the page has a size grip (bottom right):
+ * placed on the page, its width and height; in the comment column, its height (the column sets the width).
+ */
+function PageObject({ part, className, itemId, style, inColumn = false, children }: { part: Part | null; className: string; itemId: string; style?: CSSProperties; inColumn?: boolean; children: ReactNode }) {
+  const session = useSession();
+  const { readOnly } = useSessionState();
+  const runCommand = useRunCommand();
+  const entry = part?.entry ?? null;
+  const { live, grip } = useSizeGrip({
+    axis: inColumn ? "y" : "both",
+    onEnd: ({ w, h }) => entry !== null && runCommand(resizeInside(session.context, entry, inColumn ? null : w, h)),
+  });
+  const width = inColumn ? undefined : (live?.w ?? entry?.w ?? undefined);
+  const height = live?.h ?? entry?.h ?? null;
+  return (
+    <div className={`${className}${height !== null ? " sized" : ""}`} data-item-id={itemId} style={{ ...style, ...(width !== undefined ? { width } : {}), ...(height !== null ? { height } : {}) }}>
+      {children}
+      {entry !== null && !readOnly && grip}
+    </div>
   );
 }
 
@@ -260,12 +300,15 @@ export function CommentColumn({ itemId, editorRef }: { itemId: Id; editorRef?: M
  * The faint dashed curves from each small item to the text that it points to (SPEC 1.1). Stronger while the item is
  * hovered or selected. They follow the layout (scroll, resize, a drag, an edit).
  */
-function AnchorCurves({ parts, body, editorRef }: { parts: Part[]; body: string; editorRef: MutableRefObject<TextEditorApi | null> }) {
+/** Something in the column (or placed in the page) that points to a passage: a small item, or a link shadow. */
+type Anchor = { id: string; quote: string | null; quoteAt: number | null };
+
+function AnchorCurves({ anchors, body, editorRef }: { anchors: Anchor[]; body: string; editorRef: MutableRefObject<TextEditorApi | null> }) {
   const svg = useRef<SVGSVGElement>(null);
-  const [curves, setCurves] = useState<{ id: Id; d: string; end: [number, number] }[]>([]);
-  const [hot, setHot] = useState<Id | null>(null);
-  const anchored = parts.filter((part) => part.quote !== null);
-  const key = anchored.map((part) => `${part.item.id}:${part.quote}:${part.quoteAt}:${part.at?.join(",")}`).join("|");
+  const [curves, setCurves] = useState<{ id: string; d: string; end: [number, number] }[]>([]);
+  const [hot, setHot] = useState<string | null>(null);
+  const anchored = anchors.filter((anchor) => anchor.quote !== null);
+  const key = anchored.map((anchor) => `${anchor.id}:${anchor.quote}:${anchor.quoteAt}`).join("|");
   useLayoutEffect(() => {
     const frame = svg.current?.parentElement;
     if (frame == null || anchored.length === 0) {
@@ -278,9 +321,9 @@ function AnchorCurves({ parts, body, editorRef }: { parts: Part[]; body: string;
       request = requestAnimationFrame(() => {
         const view = editorRef.current?.view();
         const origin = frame.getBoundingClientRect();
-        const next: { id: Id; d: string; end: [number, number] }[] = [];
+        const next: { id: string; d: string; end: [number, number] }[] = [];
         for (const part of anchored) {
-          const box = frame.querySelector(`.page-object[data-item-id="${part.item.id}"]`)?.getBoundingClientRect();
+          const box = frame.querySelector(`.page-object[data-item-id="${part.id}"]`)?.getBoundingClientRect();
           const found = findQuote(view?.state.doc.toString() ?? body, part.quote!, part.quoteAt ?? 0);
           if (box === undefined || found === null || view == null) continue;
           const end = view.coordsAtPos(Math.min(found.end, view.state.doc.length), -1);
@@ -293,7 +336,7 @@ function AnchorCurves({ parts, body, editorRef }: { parts: Part[]; body: string;
           const sx = Math.abs(left - tx) < Math.abs(right - tx) ? left : right;
           const sy = Math.min(Math.max(ty, box.top - origin.top + 10), box.bottom - origin.top - 10);
           const bend = Math.max(30, Math.abs(sx - tx) / 2) * (sx > tx ? -1 : 1);
-          next.push({ id: part.item.id, d: `M ${sx} ${sy} C ${sx + bend} ${sy}, ${tx - bend} ${ty}, ${tx} ${ty}`, end: [tx, ty] });
+          next.push({ id: part.id, d: `M ${sx} ${sy} C ${sx + bend} ${sy}, ${tx - bend} ${ty}, ${tx} ${ty}`, end: [tx, ty] });
         }
         setCurves(next);
       });
@@ -320,10 +363,16 @@ function AnchorCurves({ parts, body, editorRef }: { parts: Part[]; body: string;
   }, [key, body, editorRef]);
   return (
     <svg ref={svg} className="anchor-curves" aria-hidden="true">
+      <defs>
+        <marker id="page-link-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M 0 0 L 8 4 L 0 8 z" />
+        </marker>
+      </defs>
       {curves.map((curve) => (
-        <g key={curve.id} className={curve.id === hot ? "hot" : undefined}>
-          <path d={curve.d} />
-          <circle cx={curve.end[0]} cy={curve.end[1]} r={2.5} />
+        // A link shadow has an arrow to its passage; a small item has a dot.
+        <g key={curve.id} className={`${curve.id === hot ? "hot" : ""}${curve.id.startsWith("link:") ? " link" : ""}`}>
+          <path d={curve.d} markerEnd={curve.id.startsWith("link:") ? "url(#page-link-arrow)" : undefined} />
+          {!curve.id.startsWith("link:") && <circle cx={curve.end[0]} cy={curve.end[1]} r={2.5} />}
         </g>
       ))}
     </svg>
@@ -340,7 +389,6 @@ function UnpointButton({ onUnpoint }: { onUnpoint?: () => void }) {
   );
 }
 
-const SMALL_ICONS: Partial<Record<ViewStyle, typeof Globe>> = { weblink: Globe, todo: Highlighter, flashcard: Layers, quote: Quote, text: Type };
 
 type OutHandler = ((point: { boardId: Id; x: number; y: number }) => void) | undefined;
 type PageSmallProps = { part: Part; editing: boolean; readOnly: boolean; onEdit(on: boolean): void; onDelete(): void; onDone(): void; onOpenUrl(url: string): void; onMove(spot: [number, number]): void; onOut?: OutHandler; onUnpoint?: () => void };
@@ -348,31 +396,23 @@ type PageSmallProps = { part: Part; editing: boolean; readOnly: boolean; onEdit(
 /** An action item, flashcard, quote, text, or web link in a page: its head moves it; double-click its text to write. */
 function PageSmall({ part, editing, readOnly, onEdit, onDelete, onDone, onOpenUrl, onMove, onOut, onUnpoint }: PageSmallProps) {
   const session = useSession();
+  const runCommand = useRunCommand();
   const mover = useMove(readOnly, onMove, onOut);
   const body = session.store.get("texts", part.item.id)?.body ?? "";
-  const Icon = SMALL_ICONS[part.view] ?? StickyNote;
   const url = part.item.url;
   return (
-    <div className={`page-note page-small kind-${part.view}${mover.dragging ? " dragging" : ""}`} style={{ ...mover.style, ...(part.color !== null ? { "--small-color": part.color } : {}) } as React.CSSProperties}>
+    <div className={`page-note page-small small-item kind-${part.view}${part.color !== null ? " custom-color" : ""}${mover.dragging ? " dragging" : ""}`} style={{ ...mover.style, ...smallColorStyle(part.color) }}>
       <div className={`page-note-head${readOnly ? "" : " movable"}`} onPointerDown={mover.onPointerDown}>
-        <Icon size={11} />
-        {part.item.name !== "" && (
-          <span className="page-small-name" dir="auto" translate="no">
-            {part.item.name}
-          </span>
-        )}
-        <span className="spacer" />
-        {!readOnly && <UnpointButton onUnpoint={onUnpoint} />}
-        {!readOnly && part.view === "todo" && (
-          <button className="icon-button small" data-tip="Done (removes the action item)" onClick={onDone}>
-            <Check size={12} />
-          </button>
-        )}
-        {!readOnly && (
-          <button className="icon-button small" data-tip="Delete" data-tip-end onClick={onDelete}>
-            <Trash2 size={12} />
-          </button>
-        )}
+        <SmallHead
+          view={part.view}
+          item={part.item}
+          readOnly={readOnly}
+          onDelete={onDelete}
+          onDone={onDone}
+          onUnpoint={onUnpoint}
+          color={part.color}
+          onColor={part.entry === null ? undefined : (color) => runCommand(colorInside(session.context, part.entry!, color))}
+        />
       </div>
       {url !== undefined && url !== "" && (
         <button className="comment-link" data-tip={url} onClick={() => onOpenUrl(url)}>
@@ -380,21 +420,19 @@ function PageSmall({ part, editing, readOnly, onEdit, onDelete, onDone, onOpenUr
           <span>{isLocalPath(url) ? fileNameOfPath(url) : hostOf(url)}</span>
         </button>
       )}
-      {editing ? (
-        <textarea
-          autoFocus
-          className="page-note-input"
-          defaultValue={body}
-          placeholder={part.view === "weblink" ? "https://… or a note" : "Write…"}
-          onChange={(event) => session.store.has("items", part.item.id) && writeText(session.store, part.item.id, event.target.value)}
-          onBlur={() => onEdit(false)}
-          onKeyDown={(event) => event.key === "Escape" && event.currentTarget.blur()}
-        />
-      ) : (
-        <div className={`page-note-text${part.view === "quote" ? " page-small-quote" : ""}`} dir="auto" onDoubleClick={() => !readOnly && onEdit(true)}>
-          {body !== "" ? body : <span className="untitled">Double-click to write</span>}
-        </div>
-      )}
+      <SmallFace
+        view={part.view}
+        item={part.item}
+        body={body}
+        editing={editing}
+        readOnly={readOnly}
+        onEdit={onEdit}
+        onWrite={(text) => session.store.has("items", part.item.id) && writeText(session.store, part.item.id, text)}
+        onRename={(name) => runCommand(renameItem(session.context, part.item.id, name, { allowEmpty: true }))}
+        textClass="page-note-text"
+        inputClass="page-note-input"
+        placeholder={part.view === "weblink" ? "https://… or a note" : undefined}
+      />
     </div>
   );
 }
@@ -542,7 +580,7 @@ function PageNote({ note, color = null, editing, readOnly, onEdit, onDelete, onM
         <span className="spacer" />
         {!readOnly && <UnpointButton onUnpoint={onUnpoint} />}
         {!readOnly && (
-          <button className="icon-button small" data-tip="Delete the note" data-tip-end onClick={onDelete}>
+          <button className="icon-button small hover-only" data-tip="Delete the note" data-tip-end onClick={onDelete}>
             <Trash2 size={12} />
           </button>
         )}
@@ -576,17 +614,16 @@ function Entry({ item, editing, readOnly, folded, lead, onEdit, onDelete, onHead
   useEffect(() => {
     if (editing) area.current?.focus();
   }, [editing]);
-  const time = new Date(item.created);
   return (
     <>
       <div className={`comment-head${onHeadPointerDown !== undefined && !readOnly ? " movable" : ""}`} onPointerDown={onHeadPointerDown}>
         {lead}
         <MessageSquare size={11} />
         <span className="comment-author">{item.author ?? "Comment"}</span>
-        {folded !== true && <span className="comment-time">{Number.isNaN(time.getTime()) ? "" : time.toLocaleString(uiLocale(), { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>}
+        {folded !== true && <span className="comment-time">{shortTime(item.created)}</span>}
         {children}
         {!readOnly && folded !== true && (
-          <button className="icon-button small comment-delete" data-tip="Delete (with its replies)" data-tip-end onClick={onDelete}>
+          <button className="icon-button small comment-delete hover-only" data-tip="Delete (with its replies)" data-tip-end onClick={onDelete}>
             <Trash2 size={12} />
           </button>
         )}

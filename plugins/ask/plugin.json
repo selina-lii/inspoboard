@@ -1,0 +1,8 @@
+{
+  "protocol": 1,
+  "title": "Ask the vault",
+  "version": "0.1.0",
+  "exec": "inspoboard-ask",
+  "capabilities": ["ask-vault"],
+  "lab": true
+}

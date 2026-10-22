@@ -11,12 +11,16 @@ import { Annotation, EditorState } from "@codemirror/state";
 import { EditorView, keymap, placeholder } from "@codemirror/view";
 import { Transaction } from "@codemirror/state";
 import { Link2, Plus } from "lucide-react";
-import { useEffect, useRef, useState, type MutableRefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { writeText } from "../../core/actions";
 import type { Id } from "../../core/types";
 import { useRunCommand, useSession, useSessionState } from "../app/sessionContext";
+import { clipLineage } from "../plugins/tray/clips";
+import { isOnProcessingMap } from "../plugins/tray/processing";
+import { addSources } from "../../core/lineage";
 import { announceNewComment, commentCommand } from "../windows/CommentColumn";
-import { withScheme } from "../web/savedPages";
+import { findQuote, withScheme } from "../web/savedPages";
+import { insideEntries } from "../../core/inside";
 import { ContextMenu, type MenuRequest } from "../app/ContextMenu";
 import { useJump, useWorkspaceActions, type WorkspaceActions } from "../app/workspaceActions";
 import { useSpeech } from "../plugins/speech";
@@ -24,11 +28,19 @@ import { formattingKeys } from "./formatting";
 import { editorTheme, flashField, linkTargetAt, livePreview, setFlash, webUrlAt } from "./livePreview";
 import { useWebPages } from "../web/WebPages";
 import { Download, Globe, MessageSquarePlus, RefreshCw } from "lucide-react";
-import { rememberSelection } from "./selections";
+import { cursorOf, rememberCursor, rememberSelection } from "./selections";
 import { markAt, markField, markTheme, setMarkRanges } from "./marks";
 import { spacerField } from "./spacers";
-import { imageInput, imagePreview, imageSource } from "./images";
+import { imageAlt, imageAtEvent, imageInput, imageMarkdown, imagePreview, imageSource, insertImageMarkdown, placeImage } from "./images";
+import { FILE_DROP, type FileDrop } from "../app/fileDrop";
 import { linkCard } from "./linkCard";
+import { formulaNotesField, setFormulaNotes } from "./formulaNotes";
+import { linkedPassagesField, setLinkedPassages } from "./linkedPassages";
+import { buzzEditor } from "../plugins/buzzies/editor";
+import { linkedPassageRange, linkedPassagesOf, passageEndWrites, type PassageAnchor } from "../../core/linkEnds";
+import { findFormulas } from "../plugins/formulas";
+import { useFormulaWords } from "../plugins/formulaWords";
+import { useStoreRevision } from "../app/sessionContext";
 import { describeTarget } from "../app/textLinks";
 import { t } from "../i18n/i18n";
 import { urlOf } from "../app/vaultImages";
@@ -44,6 +56,8 @@ export type TextEditorApi = {
   focus(): void;
   /** Highlights the selected text (marks). False if no text is selected. */
   highlightSelection(): boolean;
+  /** A file dialog for an image; the image goes into the vault, and its Markdown goes to the cursor. */
+  insertImage(): void;
   /** The CodeMirror view (for side-by-side alignment). */
   view(): EditorView | null;
 };
@@ -75,7 +89,7 @@ export function TextEditor({ itemId, readOnly, apiRef, autoFocus, onLayout }: Pr
   web.current = useWebPages();
   const runCommand = useRunCommand();
   const userName = useSessionState().settings.userName;
-  /** Selected text: "Comment" and "Add web link…". */
+  /** Selected text: "Comment" and "Add URL…". */
   const selectionEntries = useRef<(view: EditorView) => MenuRequest["entries"]>(() => []);
   selectionEntries.current = (view) => {
     if (view.state.readOnly) return [];
@@ -107,10 +121,10 @@ export function TextEditor({ itemId, readOnly, apiRef, autoFocus, onLayout }: Pr
     entries.push({ label: "Send to link bench", icon: <Link2 size={14} />, onSelect: () => sendToBench({ itemId, quote: label, range: { from: range.from, to: range.to } }) });
     if (!label.includes("\n") && !label.includes("]")) {
       entries.push({
-        label: "Add web link…",
+        label: "Add URL…",
         icon: <Globe size={14} />,
         onSelect: async () => {
-          const values = await actions.current.askFields({ title: `Web link for “${label}”`, submit: "Add link", fields: [{ key: "url", label: "Web address", value: "", placeholder: "https://…", pattern: /\S/ }] });
+          const values = await actions.current.askFields({ title: `URL for “${label}”`, submit: "Add link", fields: [{ key: "url", label: "URL", value: "", placeholder: "https://…", pattern: /\S/ }] });
           if (values === null) return;
           view.dispatch({ changes: { from: range.from, to: range.to, insert: `[${label}](${withScheme(values.url!)})` } });
         },
@@ -140,10 +154,15 @@ export function TextEditor({ itemId, readOnly, apiRef, autoFocus, onLayout }: Pr
     let replaying = false;
     /** After the editor closes, its steps in the app history do nothing. */
     let destroyed = false;
+    // The cursor where it was when the item closed (in this run of the app). A text that changed since: it stays in the text.
+    const cursor = cursorOf(itemId);
+    const clamp = (position: number) => Math.min(Math.max(position, 0), initial.length);
     const view = new EditorView({
       parent: host.current!,
+      ...(cursor === undefined ? {} : { scrollTo: EditorView.scrollIntoView(clamp(cursor.head), { y: "center" }) }),
       state: EditorState.create({
         doc: initial,
+        ...(cursor === undefined ? {} : { selection: { anchor: clamp(cursor.anchor), head: clamp(cursor.head) } }),
         extensions: [
           history(),
           keymap.of([
@@ -168,13 +187,22 @@ export function TextEditor({ itemId, readOnly, apiRef, autoFocus, onLayout }: Pr
           // A link to an item: a hover card with its name, place, and passage, and a "Go to" button.
           linkCard(
             (target) => describeTarget(session.store, session.graph, session.rootId, target),
-            (target) => (target.kind === "link" ? actions.current.followLink(target.id) : actions.current.openRecord(target.id)),
+            // An item link shows the item where it is (a link object: its saved page or PDF), as a relation link does.
+            (target) => (target.kind === "link" ? actions.current.followLink(target.id) : actions.current.openAt(target.id)),
             t,
           ),
           imagePreview,
+          formulaNotesField,
+          linkedPassagesField,
+          buzzEditor,
+          // A paste of text copied from a different item, into an item on a processing map: it gets that item as a source.
+          clipLineage(itemId, (sources) => {
+            if (isOnProcessingMap(session.context, itemId)) runCommand(addSources(session.context, itemId, sources));
+          }),
           imageSource.of((path) => urlOf(session, path)),
           imageInput(
             (name, bytes) => session.saveImageBytes(name, bytes),
+            () => session.pasteImages(),
             (message) => setImageError(`The image could not be added: ${message}`),
           ),
           flashField,
@@ -190,8 +218,9 @@ export function TextEditor({ itemId, readOnly, apiRef, autoFocus, onLayout }: Pr
           EditorView.updateListener.of((update) => {
             if (update.geometryChanged || update.heightChanged || update.docChanged) layoutListener.current?.();
             if (update.selectionSet) {
-              const { from, to } = update.state.selection.main;
+              const { from, to, anchor, head } = update.state.selection.main;
               rememberSelection(itemId, from, to);
+              rememberCursor(itemId, anchor, head);
               // The link bench can take the selected passage (with its place in the text).
               if (update.view.hasFocus) reportPassage(from < to ? { itemId, quote: update.state.sliceDoc(from, to), range: { from, to } } : null, itemId);
             }
@@ -216,7 +245,9 @@ export function TextEditor({ itemId, readOnly, apiRef, autoFocus, onLayout }: Pr
               session.history.recordView("Edit text", { undo: () => replay(undo), redo: () => replay(redo) });
             }
             if (!store.has("items", itemId)) return;
-            writeText(store, itemId, update.state.doc.toString());
+            const body = update.state.doc.toString();
+            // Linked passages that the edit moved or changed: their link ends follow them (SPEC 7.11), in the same write.
+            writeText(store, itemId, body, undefined, passageEndWrites(store, body, update.state.field(linkedPassagesField).anchors));
           }),
           EditorView.domEventHandlers({
             // Highlight tool: each selection gets a highlight.
@@ -260,11 +291,42 @@ export function TextEditor({ itemId, readOnly, apiRef, autoFocus, onLayout }: Pr
               if (target === null) return false;
               event.preventDefault();
               if (target.kind === "link") actions.current.followLink(target.id);
-              else actions.current.openRecord(target.id);
+              else actions.current.openAt(target.id);
               return true;
             },
             // Right-click: "Read web page" on a web address, "Create link to…" on selected text.
             contextmenu: (event, editorView) => {
+              // macOS: Ctrl+click is also a right-click. On a link it only follows the link (mousedown did it): no menu.
+              if (event.ctrlKey && !event.metaKey) {
+                const position = editorView.posAtCoords({ x: event.clientX, y: event.clientY });
+                if (position !== null && (webUrlAt(editorView.state, position) !== null || linkTargetAt(editorView.state, position) !== null)) {
+                  event.preventDefault();
+                  return true;
+                }
+              }
+              // On an image: its place (on its own lines, or at a side with the text beside it).
+              const image = editorView.state.readOnly ? null : imageAtEvent(editorView, event);
+              if (image !== null) {
+                event.preventDefault();
+                setMenu({
+                  x: event.clientX,
+                  y: event.clientY,
+                  entries: [
+                    {
+                      kind: "choices",
+                      label: "Place",
+                      current: imageAlt(image.alt).place ?? "alone",
+                      choices: [
+                        { id: "left", text: "Left", tip: "At the left, with the text beside it" },
+                        { id: "alone", text: "Alone", tip: "On its own lines" },
+                        { id: "right", text: "Right", tip: "At the right, with the text beside it" },
+                      ],
+                      onSelect: (id) => placeImage(editorView, image, id === "left" || id === "right" ? id : null),
+                    },
+                  ],
+                });
+                return true;
+              }
               const position = editorView.posAtCoords({ x: event.clientX, y: event.clientY }) ?? undefined;
               if (!showMenu.current(editorView, event.clientX, event.clientY, position)) return false;
               event.preventDefault();
@@ -286,6 +348,35 @@ export function TextEditor({ itemId, readOnly, apiRef, autoFocus, onLayout }: Pr
       });
     });
 
+    // Image files dropped from the system (Finder) go into the vault and their Markdown goes to the drop point. The
+    // window takes system drops (fileDrop.ts), so the editor gets them as an app event.
+    const onFileDrop = (event: Event) => {
+      event.stopPropagation();
+      if (view.state.readOnly) return;
+      const { paths, x, y } = (event as CustomEvent<FileDrop>).detail;
+      const images = paths.filter((path) => /\.(png|jpe?g|gif|webp)$/i.test(path));
+      if (images.length === 0) {
+        if (paths.length > 0) setImageError("Only PNG, JPEG, GIF, or WebP images can be dropped into a text.");
+        return;
+      }
+      // The nearest text position: a drop beside or below the text goes to the nearest line.
+      const at = view.posAtCoords({ x, y }, false);
+      void (async () => {
+        const parts: string[] = [];
+        for (const path of images) {
+          try {
+            parts.push(imageMarkdown(await session.importImageFile(path)));
+          } catch (problem) {
+            setImageError(`The image could not be added: ${String(problem).replace(/^Error: /, "")}`);
+          }
+        }
+        if (!destroyed) insertImageMarkdown(view, parts, at);
+      })();
+    };
+    // The whole page or window of the text takes drops (also its margins, its title, and the space below the text).
+    const dropHost = host.current!.closest<HTMLElement>(".editor-window, .text-page") ?? host.current!;
+    dropHost.addEventListener(FILE_DROP, onFileDrop);
+
     viewRef.current = view;
     setScrollHost(view.scrollDOM);
     if (apiRef !== undefined) {
@@ -301,6 +392,17 @@ export function TextEditor({ itemId, readOnly, apiRef, autoFocus, onLayout }: Pr
           showMenu.current(view, at?.left ?? 0, at?.bottom ?? 0);
         },
         focus: () => view.focus(),
+        insertImage: () => {
+          const at = view.state.selection.main.head;
+          void session
+            .importImage()
+            .then((path) => {
+              if (path === null || destroyed) return;
+              insertImageMarkdown(view, [imageMarkdown(path)], at);
+              view.focus();
+            })
+            .catch((problem: unknown) => setImageError(`The image could not be added: ${String(problem).replace(/^Error: /, "")}`));
+        },
         view: () => view,
       };
     }
@@ -308,6 +410,7 @@ export function TextEditor({ itemId, readOnly, apiRef, autoFocus, onLayout }: Pr
 
     return () => {
       unsubscribe();
+      dropHost.removeEventListener(FILE_DROP, onFileDrop);
       setScrollHost(null);
       if (apiRef !== undefined) apiRef.current = null;
       viewRef.current = null;
@@ -323,6 +426,48 @@ export function TextEditor({ itemId, readOnly, apiRef, autoFocus, onLayout }: Pr
     if (view === null || markNotes === undefined || marks.current === null) return;
     view.dispatch({ effects: setMarkRanges.of(marks.current.rangesIn(view.state.doc.toString())) });
   }, [markNotes, scrollHost]);
+
+  // Formula notes (setting formulaNotes): the words of each formula of the text, at the left of its line.
+  const notesOn = useSessionState().settings.formulaNotes;
+  const revision = useStoreRevision();
+  const body = notesOn ? (session.store.get("texts", itemId)?.body ?? "") : "";
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const textFormulas = useMemo(() => (notesOn ? findFormulas(body) : []), [notesOn, body, revision]);
+  const formulaWords = useFormulaWords(notesOn && textFormulas.length > 0 ? textFormulas : null);
+  const notesKey = formulaWords === null ? "" : formulaWords.join("\u0000");
+  useEffect(() => {
+    const view = viewRef.current;
+    if (view === null) return;
+    const notes = formulaWords === null ? [] : textFormulas.map((formula, at) => ({ from: formula.start, words: formulaWords[at] ?? "", tex: formula.tex ?? "" }));
+    view.dispatch({ effects: setFormulaNotes.of(notes) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notesKey, textFormulas, scrollHost]);
+
+  // Linked passages (SPEC 7.11): a gray mark on each passage of a link from or to this item, and on each text that a
+  // small item in the page points to (SPEC 1.1).
+  const passageBody = session.store.get("texts", itemId)?.body ?? "";
+  const passageRanges = useMemo<PassageAnchor[]>(() => [
+    ...linkedPassagesOf(session.store, session.graph, itemId).flatMap((passage) => {
+      const range = linkedPassageRange(passageBody, passage);
+      // A text link "[words](link:<id>)" moves with the text: its link does not change.
+      const side = !passage.outgoing ? "to" : passageBody.includes(`](link:${passage.linkId})`) ? "text" : "from";
+      return range === null ? [] : [{ id: `${side}:${passage.linkId}`, ...range }];
+    }),
+    ...insideEntries(session.store, session.graph, itemId).flatMap((entry) => {
+      const found = entry.quote === null ? null : findQuote(passageBody, entry.quote, entry.quoteAt ?? 0);
+      return found === null ? [] : [{ id: `inside:${entry.link.id}`, from: found.start, to: found.end }];
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], [passageBody, itemId, revision]);
+  const passagesKey = passageRanges.map((range) => `${range.id}@${range.from}-${range.to}`).join(",");
+  useEffect(() => {
+    const view = viewRef.current;
+    if (view === null) return;
+    // The ranges come from the saved text: while the user types, the field maps them, and the next save measures again.
+    if (view.state.doc.length !== passageBody.length || view.state.doc.toString() !== passageBody) return;
+    view.dispatch({ effects: setLinkedPassages.of(passageRanges) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [passagesKey, scrollHost, revision]);
 
   // A jump to this item: mark the range in yellow, select it, and scroll to it.
   useEffect(() => {

@@ -1,7 +1,11 @@
 // Vault settings. App state, not core data: they are in .inspoboard/settings.json.
-// To add a setting, add a field, its default, and its check in readSettings().
+// To add a setting, add a field and its default. A true-or-false setting needs nothing more; a choice or a number
+// gets a line in CHOICES or NUMBERS; other kinds get a check in readSettings().
 
 import { isBackground } from "../core/validate";
+import { DEFAULT_MEDIA_SOURCES, normalizeHost, type MediaSource } from "../core/media";
+import { MEDIA_KINDS, VIEW_STYLES } from "../core/types";
+import type { ItemKind } from "../core/byKind";
 
 export type Settings = {
   /** The weight of the UI font (CSS font-weight, 300 light to 700 bold). Text in cards and pages keeps its own. */
@@ -16,6 +20,8 @@ export type Settings = {
   showItemDates: boolean;
   /** Read-aloud speed: 1 is normal. */
   speechRate: number;
+  /** Read aloud: formulas are said slower than the reading by this much (0 to 1; speed units). */
+  speechFormulaSlower: number;
   /** Read-aloud volume: 0 to 1. */
   speechVolume: number;
   /** Read-aloud view: highlight the sentence in the text, or also show it as a large subtitle. */
@@ -28,6 +34,12 @@ export type Settings = {
   readerInvert: boolean;
   /** Inverted colors also invert the pictures of a web page (off: pictures keep their colors). PDF pictures always invert. */
   readerInvertImages: boolean;
+  /** Formula notes: the words of each formula, in the left margin of a page, a saved web page, or a PDF (view only). */
+  formulaNotes: boolean;
+  /** Built-in plugin "Buzzies mode" (SPEC 7.13): its entry shows in the More menu. On by default. */
+  buzzies: boolean;
+  /** Buzzies mode: how it hides the text. "glyphs": symbols and blocks; "blur": an even blur. */
+  buzzStyle: "glyphs" | "blur";
   /** Read-aloud lock: a click on the text does not move the reading. */
   speechLock: boolean;
   /** Read aloud shows a cursor at the end of the audio that is ready ahead (the "ready" cursor). */
@@ -35,7 +47,7 @@ export type Settings = {
   /** The width of the translation column at the right of a web page or PDF (page units). The user drags its edge. */
   translationWidth: number;
   /**
-   * How far read-aloud makes audio ahead: "window" (about one minute), "end" (to the end of the text, while it plays),
+   * How far read-aloud makes audio ahead: "window" (up to 100 sentences ahead), "end" (to the end of the text, while it plays),
    * or "all" (all the audio first, then it plays).
    */
   speechAhead: "window" | "end" | "all";
@@ -66,6 +78,14 @@ export type Settings = {
   topBarButtons: string[];
   /** The ink of new board scribbles ("#rrggbb"), or null for the theme ink (black or white). */
   scribbleColor: string | null;
+  /** 3D view: true hides the labels of the dots (a label shows only for the dot under the pointer). */
+  galaxyHideLabels: boolean;
+  /** Built-in plugin "Sorting tray" (SPEC 7.16): sorting maps show their tray, and cards get the tray entries. On by default. */
+  tray: boolean;
+  /** Sorting tray: how many items each "Pull" takes out of the tray. */
+  trayCount: number;
+  /** Processing maps (SPEC 7.16): when a card becomes a copy. "edit": at the first change; "all": all at detach; "new": new pulls only. */
+  detachCopies: DetachCopies;
   /** The width of the text on a text page (px). The user drags an edge of the text, or types it in Settings. */
   pageWidth: number;
   /** The width of the comment column at the side of a text page (px). The user drags its edge. */
@@ -74,8 +94,16 @@ export type Settings = {
   backupAlertMB: number;
   /** The option values of each plugin, for example {"translate": {"target": "zh"}}. */
   pluginOptions: Record<string, Record<string, string>>;
+  /** Media sources (SPEC 7.14): the sites whose links become media items when pasted on a board. The user edits the list. */
+  mediaSources: MediaSource[];
+  /** "Items by type" (top bar): the type it lists, a card kind or "media". It stays until the user picks another. */
+  listKind: ListKind;
 };
 
+/** The types of "Items by type": the card kinds, and media items. */
+export type ListKind = ItemKind;
+export const LIST_KINDS: readonly ListKind[] = [...VIEW_STYLES, "media"];
+export type DetachCopies = "edit" | "all" | "new";
 export type SpeechMode = "highlight" | "subtitle";
 export type ThemeSetting = "system" | "dark" | "light";
 export type TransformLayout = "replace" | "side";
@@ -85,6 +113,8 @@ export const SPEECH_RATE_RANGE = { min: 0.5, max: 3 } as const;
 export const COMMENT_WIDTH_RANGE = { min: 160, max: 640 };
 /** The width of the text on a text page (px). */
 export const PAGE_WIDTH_RANGE = { min: 360, max: 2400 };
+/** Sorting tray: the items that one "Pull" takes. */
+export const TRAY_COUNT_RANGE = { min: 1, max: 50 };
 /** The weight of the UI font. */
 export const UI_FONT_WEIGHT_RANGE = { min: 300, max: 700 };
 /** The width of the translation column of a web page or PDF (page units). */
@@ -135,12 +165,16 @@ export const DEFAULT_SETTINGS: Settings = {
   showItemTitle: true,
   showItemDates: false,
   speechRate: 1,
+  speechFormulaSlower: 0.5,
   speechVolume: 1,
   speechMode: "highlight",
   subtitleFloating: true,
   subtitleBoth: false,
   readerInvert: false,
   readerInvertImages: false,
+  formulaNotes: false,
+  buzzies: true,
+  buzzStyle: "glyphs",
   speechLock: false,
   speechShowReady: false,
   speechAhead: "window",
@@ -158,11 +192,43 @@ export const DEFAULT_SETTINGS: Settings = {
   zenButtons: ["back", "undo", "redo", "select", "scribble", "eraser", "text"],
   topBarButtons: [],
   scribbleColor: null,
+  galaxyHideLabels: false,
+  tray: true,
+  trayCount: 5,
+  detachCopies: "edit",
   commentWidth: 250,
   pageWidth: 760,
   pluginOptions: {},
+  mediaSources: DEFAULT_MEDIA_SOURCES.map((source) => ({ ...source })),
+  listKind: "todo",
 };
 export const BACKUP_ALERT_RANGE = { min: 1, max: 10_000_000 } as const;
+
+/** Settings with a few allowed values. (A true-or-false setting needs no entry: its default tells its type.) */
+const CHOICES: { [K in keyof Settings]?: readonly Settings[K][] } = {
+  theme: ["system", "dark", "light"],
+  speechMode: ["highlight", "subtitle"],
+  speechAhead: ["window", "end", "all"],
+  speechMarkdown: ["auto", "markdown", "paper"],
+  speechSpeedKey: ["ctrl", "alt"],
+  transformLayout: ["replace", "side"],
+  listKind: LIST_KINDS,
+  detachCopies: ["edit", "all", "new"],
+  buzzStyle: ["glyphs", "blur"],
+};
+
+/** Number settings: the allowed range, and `round` for whole numbers. */
+const NUMBERS: { [K in keyof Settings]?: { min: number; max: number; round?: boolean } } = {
+  uiFontWeight: { ...UI_FONT_WEIGHT_RANGE, round: true },
+  speechRate: SPEECH_RATE_RANGE,
+  speechFormulaSlower: { min: 0, max: 1 },
+  speechVolume: { min: 0, max: 1 },
+  translationWidth: TRANSLATION_WIDTH_RANGE,
+  transformSplit: TRANSFORM_SPLIT_RANGE,
+  backupAlertMB: BACKUP_ALERT_RANGE,
+  commentWidth: COMMENT_WIDTH_RANGE,
+  pageWidth: { ...PAGE_WIDTH_RANGE, round: true },
+};
 
 /** Reads the settings file. A missing or bad value gives the default. Unknown fields are ignored. */
 export function readSettings(text: string | undefined): Settings {
@@ -176,39 +242,32 @@ export function readSettings(text: string | undefined): Settings {
   }
   if (typeof value !== "object" || value === null) return settings;
   const record = value as Record<string, unknown>;
-  if (isNumberIn(record.uiFontWeight, UI_FONT_WEIGHT_RANGE.min, UI_FONT_WEIGHT_RANGE.max)) settings.uiFontWeight = Math.round(record.uiFontWeight);
-  if (record.theme === "system" || record.theme === "dark" || record.theme === "light") settings.theme = record.theme;
+  const out = settings as Record<string, unknown>;
+  // A setting whose default is true or false: any true or false.
+  for (const [key, fallback] of Object.entries(DEFAULT_SETTINGS)) {
+    if (typeof fallback === "boolean" && typeof record[key] === "boolean") out[key] = record[key];
+  }
+  for (const [key, choices] of Object.entries(CHOICES)) {
+    if ((choices as readonly unknown[]).includes(record[key])) out[key] = record[key];
+  }
+  for (const [key, range] of Object.entries(NUMBERS)) {
+    const number = record[key];
+    if (isNumberIn(number, range.min, range.max)) out[key] = range.round === true ? Math.round(number) : number;
+  }
   if (typeof record.uiLanguage === "string" && /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})?$/.test(record.uiLanguage)) settings.uiLanguage = record.uiLanguage;
-  if (typeof record.showItemTitle === "boolean") settings.showItemTitle = record.showItemTitle;
-  if (typeof record.showItemDates === "boolean") settings.showItemDates = record.showItemDates;
-  if (isNumberIn(record.speechRate, SPEECH_RATE_RANGE.min, SPEECH_RATE_RANGE.max)) settings.speechRate = record.speechRate;
-  if (isNumberIn(record.speechVolume, 0, 1)) settings.speechVolume = record.speechVolume;
-  if (record.speechMode === "highlight" || record.speechMode === "subtitle") settings.speechMode = record.speechMode;
-  if (typeof record.subtitleFloating === "boolean") settings.subtitleFloating = record.subtitleFloating;
-  if (record.speechAhead === "window" || record.speechAhead === "end" || record.speechAhead === "all") settings.speechAhead = record.speechAhead;
-  if (typeof record.subtitleBoth === "boolean") settings.subtitleBoth = record.subtitleBoth;
-  if (typeof record.readerInvert === "boolean") settings.readerInvert = record.readerInvert;
-  if (typeof record.readerInvertImages === "boolean") settings.readerInvertImages = record.readerInvertImages;
-  if (typeof record.speechLock === "boolean") settings.speechLock = record.speechLock;
-  if (typeof record.speechShowReady === "boolean") settings.speechShowReady = record.speechShowReady;
-  if (isNumberIn(record.translationWidth, TRANSLATION_WIDTH_RANGE.min, TRANSLATION_WIDTH_RANGE.max)) settings.translationWidth = record.translationWidth;
   settings.speechSkip = readSkip(record.speechSkip);
   settings.translateSkip = readSkip(record.translateSkip);
-  if (record.speechMarkdown === "auto" || record.speechMarkdown === "markdown" || record.speechMarkdown === "paper") settings.speechMarkdown = record.speechMarkdown;
   // Values of version 0.1: "always" was Markdown. "never" (all characters) has no mode now: auto.
   if (record.speechMarkdown === "always") settings.speechMarkdown = "markdown";
-  if (record.speechSpeedKey === "ctrl" || record.speechSpeedKey === "alt") settings.speechSpeedKey = record.speechSpeedKey;
   if (typeof record.userName === "string") settings.userName = record.userName.slice(0, 80);
-  if (record.transformLayout === "replace" || record.transformLayout === "side") settings.transformLayout = record.transformLayout;
-  if (isNumberIn(record.transformSplit, TRANSFORM_SPLIT_RANGE.min, TRANSFORM_SPLIT_RANGE.max)) settings.transformSplit = record.transformSplit;
-  if (isNumberIn(record.backupAlertMB, BACKUP_ALERT_RANGE.min, BACKUP_ALERT_RANGE.max)) settings.backupAlertMB = record.backupAlertMB;
-  if (isNumberIn(record.commentWidth, COMMENT_WIDTH_RANGE.min, COMMENT_WIDTH_RANGE.max)) settings.commentWidth = record.commentWidth;
-  if (isNumberIn(record.pageWidth, PAGE_WIDTH_RANGE.min, PAGE_WIDTH_RANGE.max)) settings.pageWidth = Math.round(record.pageWidth);
   if (Array.isArray(record.zenButtons)) settings.zenButtons = [...new Set(record.zenButtons.filter((id): id is string => typeof id === "string"))];
   if (typeof record.scribbleColor === "string" && /^#[0-9a-f]{6}$/i.test(record.scribbleColor)) settings.scribbleColor = record.scribbleColor;
+  if (typeof record.tray === "boolean") settings.tray = record.tray;
+  if (typeof record.trayCount === "number" && Number.isFinite(record.trayCount)) settings.trayCount = Math.min(TRAY_COUNT_RANGE.max, Math.max(TRAY_COUNT_RANGE.min, Math.round(record.trayCount)));
+  if (typeof record.galaxyHideLabels === "boolean") settings.galaxyHideLabels = record.galaxyHideLabels;
   if (Array.isArray(record.topBarButtons)) settings.topBarButtons = [...new Set(record.topBarButtons.filter((id): id is string => typeof id === "string"))];
   settings.pluginOptions = readPluginOptions(record.pluginOptions);
-  if (typeof record.defaultBackgroundFixed === "boolean") settings.defaultBackgroundFixed = record.defaultBackgroundFixed;
+  if (Array.isArray(record.mediaSources)) settings.mediaSources = readMediaSources(record.mediaSources);
   if (isBackground(record.defaultBackground)) settings.defaultBackground = record.defaultBackground;
   return settings;
 }
@@ -242,4 +301,17 @@ function readPluginOptions(value: unknown): Record<string, Record<string, string
 
 export function encodeSettings(settings: Settings): string {
   return `${JSON.stringify(settings, null, 2)}\n`;
+}
+
+/** The media sources of the settings file. Bad entries are left out; the same host counts one time. */
+function readMediaSources(list: unknown[]): MediaSource[] {
+  const out: MediaSource[] = [];
+  for (const entry of list) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const record = entry as Record<string, unknown>;
+    const host = typeof record.host === "string" ? normalizeHost(record.host) : null;
+    if (host === null || !MEDIA_KINDS.includes(record.kind as never) || out.some((source) => source.host === host)) continue;
+    out.push({ host, kind: record.kind as MediaSource["kind"], on: record.on !== false });
+  }
+  return out;
 }

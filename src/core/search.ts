@@ -5,7 +5,7 @@ import type { Store } from "./store";
 import type { Id } from "./types";
 
 /** "page": the text of the saved web page (or PDF) of a link object. */
-export type SearchField = "name" | "body" | "label" | "group" | "alt" | "page";
+export type SearchField = "name" | "subtitle" | "body" | "label" | "group" | "alt" | "page";
 
 export type SearchHit = {
   /** The record that has the match: an item, a stamp, or a relation link. */
@@ -14,6 +14,8 @@ export type SearchHit = {
   /** Character offset of the match in the field. */
   start: number;
   end: number;
+  /** The text that matches (for a regular expression, it is not the query). */
+  match: string;
   /** The text near the match, for the result list. */
   excerpt: string;
   /** Item IDs from the search board to the board that shows the record. */
@@ -24,6 +26,10 @@ export type SearchOptions = {
   maxDepth?: number;
   maxHits?: number;
   caseSensitive?: boolean;
+  /** Only whole words: no letter, digit or "_" right before or after the match. */
+  wholeWord?: boolean;
+  /** The query is a regular expression (JavaScript syntax). */
+  regex?: boolean;
 };
 
 const EXCERPT_RADIUS = 30;
@@ -43,9 +49,9 @@ export function searchBoard(
 ): SearchHit[] {
   const maxDepth = options.maxDepth ?? 32;
   const maxHits = options.maxHits ?? 500;
-  const matcher = makeMatcher(query, options.caseSensitive ?? false);
+  const matcher = makeMatcher(query, options);
   const hits: SearchHit[] = [];
-  if (matcher === null) return hits;
+  if (matcher === null || typeof matcher === "string") return hits;
 
   const visited = new Set<Id>([boardId]);
   const queue: { id: Id; path: Id[] }[] = [{ id: boardId, path: [] }];
@@ -53,7 +59,7 @@ export function searchBoard(
     if (text === undefined) return;
     for (const range of matcher(text)) {
       if (hits.length >= maxHits) return;
-      hits.push({ recordId, field, ...range, excerpt: excerptOf(text, range.start, range.end), path });
+      hits.push({ recordId, field, ...range, match: text.slice(range.start, range.end), excerpt: excerptOf(text, range.start, range.end), path });
     }
   };
 
@@ -62,6 +68,7 @@ export function searchBoard(
     const { id, path } = queue[index]!;
     const item = store.get("items", id);
     add(id, "name", item?.name, path);
+    add(id, "subtitle", item?.subtitle, path);
     add(id, "body", store.get("texts", id)?.body, path);
     add(id, "alt", store.get("stamps", id)?.alt, path);
     add(id, "page", pages.get(id), path);
@@ -80,18 +87,78 @@ export function searchBoard(
 }
 
 type Range = { start: number; end: number };
-type Matcher = (text: string) => Range[];
+export type Matcher = (text: string) => Range[];
 
-function makeMatcher(query: string, caseSensitive: boolean): Matcher | null {
+/** A letter, a digit or "_": a match of "whole word" has none of these right before or after it. */
+const WORD_CHARACTER = /[\p{L}\p{N}_]/u;
+
+/**
+ * The matcher of a query. Null: an empty query. A string: the regular expression is not correct (the error message).
+ */
+export function makeMatcher(query: string, options: Pick<SearchOptions, "caseSensitive" | "wholeWord" | "regex"> = {}): Matcher | string | null {
   if (query.length === 0) return null;
-  if (caseSensitive) {
-    return (text) => findAll(text, query).map((start) => ({ start, end: start + query.length }));
+  // A plain query with special codes (^p, ^t, …) is a regular expression.
+  ({ query, options } = withCodes(query, options));
+  if (options.regex === true) {
+    const pattern = regexOf(query, options);
+    if (typeof pattern === "string") return pattern;
+    return (text) => {
+      const ranges: Range[] = [];
+      pattern.lastIndex = 0;
+      for (let match = pattern.exec(text); match !== null; match = pattern.exec(text)) {
+        // An empty match finds nothing to show or replace: go on after it.
+        if (match[0].length === 0) pattern.lastIndex += 1;
+        else ranges.push({ start: match.index, end: match.index + match[0].length });
+      }
+      return ranges;
+    };
   }
-  const needle = foldCase(query).folded;
-  return (text) => {
-    const { folded, origin } = foldCase(text);
-    return findAll(folded, needle).map((start) => ({ start: origin[start]!, end: origin[start + needle.length]! }));
-  };
+  const plain: Matcher =
+    options.caseSensitive === true
+      ? (text) => findAll(text, query).map((start) => ({ start, end: start + query.length }))
+      : (() => {
+          const needle = foldCase(query).folded;
+          return (text: string) => {
+            const { folded, origin } = foldCase(text);
+            return findAll(folded, needle).map((start) => ({ start: origin[start]!, end: origin[start + needle.length]! }));
+          };
+        })();
+  if (options.wholeWord !== true) return plain;
+  return (text) => plain(text).filter((range) => !WORD_CHARACTER.test(text.slice(range.start - 1, range.start)) && !WORD_CHARACTER.test(text.slice(range.end, range.end + 1)));
+}
+
+/**
+ * Special codes in a plain query (as in Microsoft Word): ^p a line break (one Enter; a blank line between Markdown
+ * paragraphs is ^p^p), ^t a tab, ^^ a caret, ^? any character, ^# any digit, ^$ any letter. Another "^" is a caret.
+ * The codes of the replacement text: see core/replace.ts.
+ */
+export const FIND_CODES: Readonly<Record<string, string>> = { p: "\\r?\\n", t: "\\t", "^": "\\^", "?": "[^\\n]", "#": "\\p{N}", $: "\\p{L}" };
+
+/** A plain query with special codes, as a regular expression (the same matches). Other queries stay as they are. */
+export function withCodes<T extends Pick<SearchOptions, "regex">>(query: string, options: T): { query: string; options: T } {
+  if (options.regex === true || !/\^[pt^?#$]/.test(query)) return { query, options };
+  let source = "";
+  for (let index = 0; index < query.length; index += 1) {
+    const code = query[index] === "^" ? FIND_CODES[query[index + 1] ?? ""] : undefined;
+    if (code !== undefined) {
+      source += code;
+      index += 1;
+    } else {
+      source += query[index]!.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+    }
+  }
+  return { query: source, options: { ...options, regex: true } };
+}
+
+/** The regular expression of a query (flags "g", "m" and "u"), or the error message. */
+export function regexOf(query: string, options: Pick<SearchOptions, "caseSensitive" | "wholeWord"> = {}): RegExp | string {
+  const source = options.wholeWord === true ? `(?<![\\p{L}\\p{N}_])(?:${query})(?![\\p{L}\\p{N}_])` : query;
+  try {
+    // "m": ^ and $ are the start and end of each line, as in text editors.
+    return new RegExp(source, options.caseSensitive === true ? "gmu" : "gimu");
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
 }
 
 function findAll(haystack: string, needle: string): number[] {

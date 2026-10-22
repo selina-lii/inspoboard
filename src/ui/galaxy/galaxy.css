@@ -23,6 +23,8 @@
   background: color-mix(in srgb, var(--panel) 85%, transparent);
   border: 1px solid var(--border);
 }
+/* The tool bars of the 3D view are at the bottom: their tooltips go up, so they stay in the view. */
+.galaxy-tools [data-tip]:hover::after, .galaxy-evolution-bar [data-tip]:hover::after { top: auto; bottom: calc(100% + 6px); }
 .galaxy-labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
 .galaxy-labels .galaxy-label { position: absolute; left: 0; top: 0; will-change: transform; }
 .galaxy-label.group { font-weight: 600; }
@@ -30,3 +32,19 @@
 .galaxy-label.group.calendar { color: #4a90ff; }
 .galaxy-tree { margin: 4px 0 0; padding: 6px 10px; list-style: none; background: rgba(20, 20, 24, 0.92); border: 1px solid #3fbf6a; border-radius: 6px; color: #f2f2f7; font-weight: 400; font-size: 11px; text-align: left; max-height: 240px; overflow: hidden; }
 .galaxy-tree li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 240px; line-height: 1.5; }
+
+/* The tour (GalaxyView.tsx TourRunner): what the camera shows now, at the top of the view. */
+.galaxy-tour-info { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 14px; background: color-mix(in srgb, var(--panel, #1c1c1e) 55%, transparent); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); border: 1px solid var(--border); color: var(--text); font-size: 12px; pointer-events: none; white-space: nowrap; max-width: calc(100% - 32px); overflow: hidden; text-overflow: ellipsis; }
+
+/* The evolution plot (EvolutionScene.tsx, SPEC 7.16): its bar at the bottom, the card of the selected item, labels. */
+.galaxy-evolution-bar { position: absolute; left: 56px; bottom: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; max-width: calc(100% - 72px); padding: 5px 10px; border-radius: 10px; background: color-mix(in srgb, var(--panel) 85%, transparent); border: 1px solid var(--border); font-size: 12px; }
+.galaxy-evolution-bar .segmented { display: inline-flex; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
+.galaxy-evolution-bar .segmented button { border: 0; border-radius: 0; background: transparent; padding: 3px 9px; font-size: 12px; color: var(--text); }
+.galaxy-evolution-bar .segmented button.active { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.galaxy-evolution-nebula { display: inline-flex; align-items: center; gap: 6px; }
+.galaxy-evolution-nebula input { width: 96px; accent-color: var(--accent); }
+.galaxy-evolution-card { position: absolute; top: 12px; right: 12px; display: grid; gap: 4px; width: min(260px, calc(100% - 24px)); padding: 10px 12px; border-radius: 10px; background: color-mix(in srgb, var(--panel) 90%, transparent); border: 1px solid var(--border); font-size: 12px; color: var(--text); }
+.galaxy-evolution-card button { justify-self: start; }
+.galaxy-evolution-stale { color: #ff7a45; }
+.galaxy-label.evolution-layer { font-weight: 700; letter-spacing: 0.03em; color: #9fb6ff; }
+.galaxy-label.evolution-selected { color: #ffb86b; }

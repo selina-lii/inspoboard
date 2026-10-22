@@ -22,6 +22,8 @@ export type Overlay = {
   bodySource: string | null;
   /** False: the original shows. The overlay stays as a cache. */
   shown: boolean;
+  /** True: only the text so far of a call that did not end. It shows, but a new run makes it again. */
+  partial?: boolean;
 };
 export type OverlayMap = ReadonlyMap<Id, Overlay>;
 
@@ -60,7 +62,7 @@ export function collectTexts(store: Store, ids: readonly Id[]): { slots: Slot[];
  * did not change since. Then the item needs no new plugin call.
  */
 export function isFresh(store: Store, overlay: Overlay | undefined, plugin: string, optionsKey: string, id: Id): boolean {
-  if (overlay === undefined || overlay.plugin !== plugin || overlay.optionsKey !== optionsKey) return false;
+  if (overlay === undefined || overlay.plugin !== plugin || overlay.optionsKey !== optionsKey || overlay.partial === true) return false;
   const item = store.get("items", id);
   if (item === undefined) return false;
   const { slots, texts } = collectTexts(store, [id]);
@@ -75,6 +77,7 @@ export function withResults(
   slots: readonly Slot[],
   results: readonly string[],
   sources: readonly string[],
+  partial = false,
 ): OverlayMap {
   const next = new Map(map);
   slots.forEach((slot, index) => {
@@ -85,7 +88,8 @@ export function withResults(
         : { plugin, optionsKey, title: null, body: null, titleSource: null, bodySource: null, shown: true };
     const result = results[index] ?? null;
     const source = sources[index] ?? null;
-    next.set(slot.id, slot.field === "title" ? { ...base, title: result, titleSource: source, shown: true } : { ...base, body: result, bodySource: source, shown: true });
+    const value = slot.field === "title" ? { ...base, title: result, titleSource: source, shown: true } : { ...base, body: result, bodySource: source, shown: true };
+    next.set(slot.id, { ...value, partial });
   });
   return next;
 }

@@ -109,3 +109,18 @@ function lookup(text: string): string | null {
   }
   return null;
 }
+
+let uiTexts: Set<string> | null = null;
+
+/**
+ * True if a text on the screen is a UI text: a key of a language pack (English) or its text in a language. Texts
+ * with values ("Undo {0}") are not in it. Buzzies mode leaves UI texts as they are (SPEC 7.13).
+ */
+export function isUiText(text: string): boolean {
+  uiTexts ??= new Set(
+    Object.values(PACKS)
+      .flatMap((pack) => [...Object.keys(pack), ...Object.values(pack)])
+      .filter((entry) => !/\{t?\d\}/.test(entry)),
+  );
+  return uiTexts.has(text.trim());
+}

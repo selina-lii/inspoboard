@@ -2,14 +2,16 @@
 // It has no React and no React Flow. The adapter (BoardView) converts it for React Flow.
 // See docs/SPEC.md section 7.1.
 
+import { isPassageLink, onlyInItems } from "../../core/linkEnds";
 import type { GraphIndex } from "../../core/graph";
 import { outlineLayout, outlineRows, parentPairs, sequencePairs } from "../../core/outline";
-import { boardGroupType, calendarSize, CALENDAR, daysBetween, daysOf, defaultMonth, gridDays, isCalendar, monthsOf, monthOf, dayOrder } from "../../core/groups";
+import { coreSize, isRadial, RADIAL, radialOffsets } from "../../core/radial";
+import { boardGroupType, calendarFrameSize, calendarViewOf, CALENDAR, daysBetween, daysOf, defaultMonth, endMinutes, gridDays, isCalendar, monthsOf, monthOf, dayOrder, monthsInView, startMinutes, WEEK, weekDays, weekStripHeight } from "../../core/groups";
 import type { Store } from "../../core/store";
-import { DEFAULT_END_CAP, DEFAULT_START_CAP, type GroupShape, type Id, type LinkCap, type ListStyle, type PlaceLink, type QuoteMarks, type ViewStyle } from "../../core/types";
+import { DEFAULT_END_CAP, DEFAULT_START_CAP, type CalendarView, type GroupShape, type Id, type LinkCap, type ListStyle, type MediaInfo, type PlaceLink, type QuoteMarks, type ViewStyle } from "../../core/types";
 import { defaultQuoteMarks } from "../../core/actions";
 
-export type BoardNodeKind = "item" | "stamp" | "ghost" | "stub" | "outline" | "calendar";
+export type BoardNodeKind = "item" | "stamp" | "ghost" | "stub" | "outline" | "calendar" | "radial";
 
 /** `spanOffset`: days from the card day to the first day of this box. `more`: the other week rows of a card on more than one day. */
 type CalendarBox = { x: number; y: number; w: number; h: number; expanded: boolean; popped: boolean; calendarId: Id; frameId: string; timeLabel: string; spanOffset: number; more: CalendarBox[] };
@@ -110,8 +112,90 @@ function layoutCalendar(store: Store, graph: GraphIndex, calendar: { id: Id; x: 
   }
 }
 
+/**
+ * The cards of a calendar in its shown week (the week view, see docs/SPEC.md section 7.6), as Google Calendar:
+ * - At the top, a strip for all-day cards (one day, no time) and cards on more than one day: bars in lanes.
+ * - Under it, the hour grid: a card with a time is at its hours (one hour if it has only a start). Cards whose times
+ *   overlap share the width of the day.
+ * Cards with no day in the shown week do not show. Returns the number of lanes of the strip.
+ */
+function layoutWeek(store: Store, graph: GraphIndex, calendar: { id: Id; x: number; y: number }, day: string, frameId: string, boxes: Map<Id, CalendarBox>, hidden: Set<Id>, popped: ReadonlySet<Id>): number {
+  const days = weekDays(day);
+  const slotOf = new Map(days.map((one, index) => [one, index] as const));
+  const columnLeft = (column: number) => calendar.x + CALENDAR.pad + WEEK.gutter + column * WEEK.cellW;
+  const stripTop = calendar.y + CALENDAR.bar + WEEK.head;
+  const box = (place: PlaceLink, part: Omit<CalendarBox, "calendarId" | "frameId" | "more" | "expanded" | "popped" | "timeLabel"> & { expanded?: boolean }, timeLabel: string): CalendarBox => {
+    const pop = popped.has(place.id) && part.expanded !== true;
+    return { ...part, h: pop ? Math.max(part.h, 160) : part.h, expanded: part.expanded === true || pop, popped: pop, calendarId: calendar.id, frameId, timeLabel, more: [] };
+  };
+  type Bar = { place: PlaceLink; from: number; to: number; lane: number };
+  const bars: Bar[] = [];
+  const timed = new Map<number, PlaceLink[]>();
+  for (const place of graph.membersOf(calendar.id)) {
+    if (place.day === undefined || store.has("stamps", place.to)) continue;
+    const slots = daysOf(place).flatMap((one) => (slotOf.has(one) ? [slotOf.get(one)!] : []));
+    if (slots.length === 0) {
+      hidden.add(place.id);
+      continue;
+    }
+    if (place.until === undefined && startMinutes(place) >= 0) timed.set(slots[0]!, [...(timed.get(slots[0]!) ?? []), place]);
+    else bars.push({ place, from: Math.min(...slots), to: Math.max(...slots), lane: 0 });
+  }
+  // The strip: longer bars first, then the order of the day.
+  const order = dayOrder(store);
+  bars.sort((a, b) => a.from - b.from || b.to - b.from - (a.to - a.from) || order(a.place, b.place));
+  const ends: number[] = [];
+  for (const bar of bars) {
+    let lane = ends.findIndex((end) => end < bar.from);
+    if (lane === -1) lane = ends.length;
+    ends[lane] = bar.to;
+    bar.lane = lane;
+    boxes.set(bar.place.id, box(bar.place, { x: columnLeft(bar.from) + 3, y: stripTop + 2 + lane * WEEK.lane, w: (bar.to - bar.from + 1) * WEEK.cellW - 6, h: WEEK.lane - 4, spanOffset: daysBetween(bar.place.day!, days[bar.from]!) }, ""));
+  }
+  const gridTop = stripTop + weekStripHeight(ends.length);
+  // The hour grid: in each day, cards whose times overlap make a cluster; each card of a cluster takes a column.
+  for (const [slot, places] of timed) {
+    const sorted = [...places].sort((a, b) => startMinutes(a) - startMinutes(b) || endMinutes(b) - endMinutes(a) || order(a, b));
+    let cluster: { place: PlaceLink; column: number }[] = [];
+    let clusterEnd = -1;
+    const flush = () => {
+      const columns = Math.max(...cluster.map((entry) => entry.column)) + 1;
+      const width = (WEEK.cellW - 6) / columns;
+      for (const { place, column } of cluster) {
+        const top = gridTop + (startMinutes(place) / 60) * WEEK.hourH;
+        const height = Math.max(COLLAPSED_HEIGHT - 8, ((endMinutes(place) - startMinutes(place)) / 60) * WEEK.hourH - 2);
+        boxes.set(place.id, box(place, { x: columnLeft(slot) + 3 + column * width, y: top, w: width - 2, h: Math.min(height, gridTop + 24 * WEEK.hourH - top), spanOffset: 0, expanded: place.expanded === true && height >= 2 * COLLAPSED_HEIGHT }, timeLabelOf(place.time)));
+      }
+      cluster = [];
+    };
+    for (const place of sorted) {
+      if (cluster.length > 0 && startMinutes(place) >= clusterEnd) flush();
+      const ends = new Map(cluster.map((entry) => [entry.column, endMinutes(entry.place)] as const));
+      let column = 0;
+      while ((ends.get(column) ?? -1) > startMinutes(place)) column += 1;
+      cluster.push({ place, column });
+      clusterEnd = Math.max(clusterEnd, endMinutes(place));
+    }
+    if (cluster.length > 0) flush();
+  }
+  return ends.length;
+}
+
+/** The number of cards on each day of a calendar (the year view shows them as dots). All its cards are hidden. */
+function countDays(store: Store, graph: GraphIndex, calendarId: Id, hidden: Set<Id>): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const place of graph.membersOf(calendarId)) {
+    if (place.day === undefined || store.has("stamps", place.to)) continue;
+    hidden.add(place.id);
+    for (const one of daysOf(place)) counts[one] = (counts[one] ?? 0) + 1;
+  }
+  return counts;
+}
+
 /** Height of a card that shows only its name. */
 export const COLLAPSED_HEIGHT = 36;
+/** The extra height of a folded card with a subtitle (its second line). */
+export const SUBTITLE_HEIGHT = 16;
 /** Space around the rows of an outline frame, and the height of its top bar. */
 export const OUTLINE_PADDING = 12;
 export const OUTLINE_BAR = 26;
@@ -138,6 +222,8 @@ export type BoardNode = {
   title: string;
   /** True if the title is a code that the app made (see names.ts). It shows in a low-profile style. */
   codeName: boolean;
+  /** A page: the line under its name (gray, italic). Empty: none (also for a board). */
+  subtitle: string;
   preview: string;
   /** A quote card: its quotation marks (from its placement, else from its text). */
   marks: QuoteMarks;
@@ -147,6 +233,10 @@ export type BoardNode = {
   stamp?: { path: string; alt: string; w: number; h: number };
   /** True if the item lives on a different board. The card is a reference: a ghost with a dashed outline. */
   isReference: boolean;
+  /** A reference on a sorting map (plugin "Sorting tray"): it shows as the real card (its kind and color), with a dashed edge. */
+  sorted: boolean;
+  /** A stub: the card it belongs to (its place link) and the top-right corner of that card as it shows. */
+  stubAnchor?: { placeId: Id; x: number; y: number } | null;
   /** The outline that holds the card, or the outline of an outline frame node. */
   outlineId: Id | null;
   /** Outline frame: the node ID of the frame. React Flow moves the cards with their frame. */
@@ -161,9 +251,17 @@ export type BoardNode = {
   color: string | null;
   /** Group frame: the group name (empty: none). */
   groupName: string;
+  /** Radial core: the radius of its ball of cards (board units). A card dropped outside it leaves the radial. */
+  radialRadius: number;
   /** Calendar frame: the shown month "YYYY-MM", and all months of its range. */
   month: string;
   months: string[];
+  /** Calendar frame: its view, the shown day (the period of the view has it), the lanes of the all-day strip of the
+   *  week view, and the number of cards on each day (the year view). */
+  calendarView: CalendarView;
+  calendarDay: string;
+  calendarLanes: number;
+  dayCounts: Record<string, number>;
   /** A card in a calendar: it has a fixed size in its day. */
   inCalendar: boolean;
   /** A calendar card in a full day that the user opened: it shows its text over its neighbors (view state). */
@@ -177,6 +275,8 @@ export type BoardNode = {
   spanOffset: number;
   /** Objects: the web address (link), the signature and the creation time (comment). */
   url: string;
+  /** A multimedia item (SPEC 7.14): its kind, link, artist, cover. Else null. */
+  media: MediaInfo | null;
   author: string;
   created: string;
   /** A comment on a text passage: the passage. */
@@ -198,15 +298,17 @@ export type BoardNode = {
   openComments: number;
 };
 
-/** View state of a board that is not saved: the month that each calendar shows. */
+/** View state of a board that is not saved: the day that each calendar shows (its view shows the week, the month,
+ *  or the year of the day). `months`: the month of each calendar (older form; `days` comes first). */
 export type BoardViewState = {
+  days?: ReadonlyMap<Id, string>;
   months?: ReadonlyMap<Id, string>;
   today?: string;
   /** Calendar cards that the user opened in a full day: they show open over their neighbors. Not saved. */
   popped?: ReadonlySet<Id>;
 };
 
-export type BoardEdgeKind = "relation" | "sequence" | "outline-child" | "attach";
+export type BoardEdgeKind = "relation" | "sequence" | "outline-child" | "attach" | "radial";
 
 export type BoardEdge = {
   id: string;
@@ -215,8 +317,13 @@ export type BoardEdge = {
   target: string;
   /** Relation link ID. Derived outline lines have none. */
   linkId: Id | null;
+  /** A link made from text, put on boards by the user: a dashed gray line. */
+  passage?: boolean;
   label?: string;
   group?: string;
+  /** The line color of the link (its own color). */
+  color?: string;
+  dashed?: boolean;
   start: LinkCap;
   end: LinkCap;
   /**
@@ -232,7 +339,7 @@ export const PARALLEL_GAP = 10;
 
 export type BoardModel = { nodes: BoardNode[]; edges: BoardEdge[] };
 
-const STUB_GAP = 48;
+const STUB_GAP = 16;
 const STUB_HEIGHT = 28;
 const STUB_WIDTH = 140;
 const PREVIEW_LENGTH = 280;
@@ -245,9 +352,24 @@ export function isCollapsedPlace(store: Store, graph: GraphIndex, place: PlaceLi
   return place.expanded !== true;
 }
 
+/**
+ * The width of a card as it shows. A folded card (not in an outline or a calendar) is as wide as its name: an
+ * estimate from the name (the view measures it; the model does not), at most 320 px as in the CSS.
+ */
+function shownWidth(node: BoardNode): number {
+  const folded = node.kind === "item" && !node.expanded && !(node.view === "text" && !node.isBoard) && node.view !== "group" && node.outlineId === null && !node.inCalendar;
+  if (!folded) return node.w;
+  let text = 0;
+  for (const ch of node.title !== "" ? node.title : "Untitled") text += /[\u2E80-\uFFEF]/.test(ch) ? 13 : 7.2;
+  // The padding, the marker room, and the hover tools at the right.
+  return Math.min(320, Math.max(60, Math.round(text + 40)));
+}
+
 /** The height of a card on the board. */
 export function cardHeight(store: Store, graph: GraphIndex, place: PlaceLink): number {
-  return isCollapsedPlace(store, graph, place) ? COLLAPSED_HEIGHT : place.h;
+  if (!isCollapsedPlace(store, graph, place)) return place.h;
+  const subtitle = !graph.isBoardItem(place.to) && (store.get("items", place.to)?.subtitle ?? "") !== "";
+  return COLLAPSED_HEIGHT + (subtitle ? SUBTITLE_HEIGHT : 0);
 }
 
 /** Space between a card and the objects attached to it. */
@@ -268,16 +390,39 @@ export function buildBoardModel(store: Store, graph: GraphIndex, boardId: Id, vi
   /** Calendar cards in the shown month: their box. Cards of other months do not show. */
   const calendarBoxes = new Map<Id, CalendarBox>();
   const hiddenPlaces = new Set<Id>();
+  /** Radial cores: a line from the core to each of its cards. */
+  const radialLines: { frameId: string; placeId: Id }[] = [];
   for (const outline of graph.outlinesOn(boardId)) {
+    // A radial: the core circle, and its cards around it (the ball seen from the front, SPEC 7.17).
+    if (isRadial(outline)) {
+      const size = coreSize(outline.name ?? "");
+      const frameId = `radial:${outline.id}`;
+      nodes.push({ ...emptyNode(), id: frameId, kind: "radial", recordId: outline.id, x: outline.x - size / 2, y: outline.y - size / 2, w: size, h: size, outlineId: outline.id, groupName: outline.name ?? "", radialRadius: outline.radius ?? RADIAL.radius });
+      for (const [placeId, [dx, dy]] of radialOffsets(store, graph, outline)) {
+        const place = store.get("links", placeId);
+        if (place?.kind !== "place") continue;
+        outlinePositions.set(placeId, { x: outline.x + dx - place.w / 2, y: outline.y + dy - cardHeight(store, graph, place) / 2, outlineId: outline.id, frameId, marker: "" });
+        radialLines.push({ frameId, placeId });
+      }
+      continue;
+    }
     if (isCalendar(outline)) {
       const months = monthsOf(outline, monthOf(today));
-      const requested = view.months?.get(outline.id);
-      const month = requested !== undefined && months.includes(requested) ? requested : defaultMonth(outline, today);
+      const calendarView = calendarViewOf(outline);
+      // The shown day: the one the user went to (its month in the range), else today (in the range), else the first month.
+      const monthStart = view.months?.get(outline.id);
+      const requested = view.days?.get(outline.id) ?? (monthStart === undefined ? undefined : `${monthStart}-01`);
+      const fallback = defaultMonth(outline, today);
+      const day = requested !== undefined && monthsInView(calendarView, requested).some((one) => months.includes(one)) ? requested : fallback === monthOf(today) ? today.slice(0, 10) : `${fallback}-01`;
+      const month = monthOf(day);
       const frameId = `calendar:${outline.id}`;
-      const size = calendarSize();
-      const frame: BoardNode = { ...emptyNode(), id: frameId, kind: "calendar", recordId: outline.id, x: outline.x, y: outline.y, w: size.w, h: size.h, outlineId: outline.id, groupName: outline.name ?? "", month, months };
+      const frame: BoardNode = { ...emptyNode(), id: frameId, kind: "calendar", recordId: outline.id, x: outline.x, y: outline.y, outlineId: outline.id, groupName: outline.name ?? "", month, months, calendarView, calendarDay: day };
       nodes.push(frame);
-      layoutCalendar(store, graph, outline, month, frameId, frame, calendarBoxes, hiddenPlaces, view.popped ?? new Set());
+      const popped = view.popped ?? new Set<Id>();
+      if (calendarView === "week") frame.calendarLanes = layoutWeek(store, graph, outline, day, frameId, calendarBoxes, hiddenPlaces, popped);
+      else if (calendarView === "year") frame.dayCounts = countDays(store, graph, outline.id, hiddenPlaces);
+      else layoutCalendar(store, graph, outline, month, frameId, frame, calendarBoxes, hiddenPlaces, popped);
+      Object.assign(frame, calendarFrameSize(calendarView, frame.calendarLanes));
       continue;
     }
     const rows = outlineRows(store, graph, outline.id);
@@ -380,15 +525,25 @@ export function buildBoardModel(store: Store, graph: GraphIndex, boardId: Id, vi
   const stubFor = (anchor: BoardNode, otherId: Id, key: string): BoardNode => {
     const existing = stubs.get(`${anchor.id}>${otherId}`);
     if (existing !== undefined) return existing;
-    const index = stubCount.get(anchor.id) ?? 0;
-    stubCount.set(anchor.id, index + 1);
+    // From the right edge that shows (a folded card is as wide as its name), or where the user dragged it.
+    const right = anchor.x + shownWidth(anchor);
+    const anchorPlace = anchor.placeId === null ? undefined : store.get("links", anchor.placeId);
+    const saved = anchorPlace?.kind === "place" ? anchorPlace.stubs?.[otherId] : undefined;
+    let at: [number, number];
+    if (saved !== undefined) at = saved;
+    else {
+      const index = stubCount.get(anchor.id) ?? 0;
+      stubCount.set(anchor.id, index + 1);
+      at = [STUB_GAP, index * (STUB_HEIGHT + 8)];
+    }
     const stub: BoardNode = {
       ...emptyNode(),
       id: `stub:${key}`,
       kind: "stub",
       recordId: otherId,
-      x: anchor.x + anchor.w + STUB_GAP,
-      y: anchor.y + index * (STUB_HEIGHT + 8),
+      x: right + at[0],
+      y: anchor.y + at[1],
+      stubAnchor: anchor.placeId === null ? null : { placeId: anchor.placeId, x: right, y: anchor.y },
       w: STUB_WIDTH,
       h: STUB_HEIGHT,
       title: titleOf(store, otherId),
@@ -409,6 +564,9 @@ export function buildBoardModel(store: Store, graph: GraphIndex, boardId: Id, vi
       // A link to the current board itself needs no stub: you are on that board already.
       // The parent board shows this link.
       if (link.from === boardId || link.to === boardId) continue;
+      // A link made from text shows in its items (a gray passage and a shadow), not on the board (SPEC 7.11),
+      // unless the user puts it on boards: then a dashed gray line.
+      if (onlyInItems(store, link)) continue;
       const sourceNode = nodeOfRecord.get(link.from);
       const targetNode = nodeOfRecord.get(link.to);
       const source = sourceNode ?? stubFor(node, link.from, link.id);
@@ -426,6 +584,9 @@ export function buildBoardModel(store: Store, graph: GraphIndex, boardId: Id, vi
       relationPairs.add(pairKey(source.id, target.id));
       if (link.label !== undefined) edge.label = link.label;
       if (link.group !== undefined) edge.group = link.group;
+      if (link.color !== undefined) edge.color = link.color;
+      if (link.dashed === true) edge.dashed = true;
+      if (isPassageLink(store, link)) edge.passage = true;
       edges.push(edge);
     }
   }
@@ -440,6 +601,10 @@ export function buildBoardModel(store: Store, graph: GraphIndex, boardId: Id, vi
     relationPairs.add(pairKey(source.id, target.id));
     const end: LinkCap = line.kind === "sequence" ? "none" : "arrow";
     edges.push({ id: `${line.kind}:${line.from}:${line.to}`, kind: line.kind, source: source.id, target: target.id, linkId: null, start: "none", end, offset: 0 });
+  }
+  for (const line of radialLines) {
+    const target = nodeOfPlace.get(line.placeId);
+    if (target !== undefined) edges.push({ id: `radial:${line.placeId}`, kind: "radial", source: line.frameId, target: target.id, linkId: null, start: "none", end: "none", offset: 0 });
   }
   return { nodes, edges };
 }
@@ -483,11 +648,13 @@ function emptyNode(): BoardNode {
     h: 0,
     title: "",
     codeName: false,
+    subtitle: "",
     preview: "",
     marks: "en",
     childCount: 0,
     isBoard: false,
     isReference: false,
+    sorted: false,
     outlineId: null,
     frameId: null,
     marker: "",
@@ -495,12 +662,18 @@ function emptyNode(): BoardNode {
     innerStamps: [],
     color: null,
     groupName: "",
+    radialRadius: 0,
     month: "",
     months: [],
+    calendarView: "month",
+    calendarDay: "",
+    calendarLanes: 0,
+    dayCounts: {},
     inCalendar: false,
     timeLabel: "",
     spanOffset: 0,
     url: "",
+    media: null,
     author: "",
     created: "",
     attachedTo: null,
@@ -562,13 +735,17 @@ function placedNode(store: Store, graph: GraphIndex, place: PlaceLink): BoardNod
     kind: "item",
     title: item.name,
     codeName: item.codeName === true,
-    preview: previewOf(store.get("texts", place.to)?.body ?? ""),
+    subtitle: isBoard ? "" : (item.subtitle ?? ""),
+    // An open note shows all its text (the user keeps it short); other cards show the start.
+    preview: previewOf(store.get("texts", place.to)?.body ?? "", base.view === "note" && !isBoard ? Infinity : PREVIEW_LENGTH),
     marks: place.marks ?? defaultQuoteMarks(store.get("texts", place.to)?.body ?? ""),
     childCount: graph.childrenOf(place.to).filter((child) => !store.has("stamps", child.to)).length,
     isBoard,
     isReference: graph.isReference(place),
+    sorted: graph.isReference(place) && store.get("items", place.from)?.sources !== undefined,
     innerStamps: isBoard ? [] : innerStampsOf(store, graph, place.to),
     url: item.url ?? "",
+    media: item.media ?? null,
     author: item.author ?? "",
     created: item.created,
     attachedTo: item.on !== undefined && store.has("items", item.on) ? item.on : null,
@@ -612,11 +789,11 @@ export function snippetOf(body: string, length = 40): string {
   return line.length > length ? `${line.slice(0, length)}…` : line;
 }
 
-/** Short plain text for a card. Inline links keep only their label. */
-export function previewOf(body: string): string {
+/** Plain text for a card, at most `length` characters. Inline links keep only their label. */
+export function previewOf(body: string, length = PREVIEW_LENGTH): string {
   const text = body
     .replace(/\[([^\]\n]*)\]\((?:item|link):[0-9a-z]{12}\)/g, "$1")
     .replace(/!\[([^\]\n|]*)(?:\|[^\]\n]*)?\]\([^)]*\)/g, "[$1]")
     .replace(/^#{1,6}\s+/gm, "");
-  return text.length > PREVIEW_LENGTH ? `${text.slice(0, PREVIEW_LENGTH)}…` : text;
+  return text.length > length ? `${text.slice(0, length)}…` : text;
 }

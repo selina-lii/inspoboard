@@ -166,19 +166,31 @@ export function LinkBench() {
       // A drag over the folded bench opens it.
       if (slot === "bench") setStored((current) => (current.open ? current : { ...current, open: true }));
     };
+    // The compare bench picked a slot: this bench stops its pick.
+    const onOtherPick = (event: Event) => (event as CustomEvent<string>).detail !== "link" && setArmed(null);
     window.addEventListener(SEND_EVENT, onSend);
     window.addEventListener(TOGGLE_EVENT, onToggle);
     window.addEventListener(HOVER_EVENT, onHover);
+    window.addEventListener("inspoboard-bench-pick", onOtherPick);
     return () => {
       window.removeEventListener(SEND_EVENT, onSend);
       window.removeEventListener(TOGGLE_EVENT, onToggle);
       window.removeEventListener(HOVER_EVENT, onHover);
+      window.removeEventListener("inspoboard-bench-pick", onOtherPick);
     };
   }, [put]);
 
-  // A picked slot: a press on a card starts a ghost drag. The view does not get the press (the card does not move).
+  // A picked slot ends when the bench folds or hides: the view must never take no clicks without a visible reason.
+  useEffect(() => {
+    if (!stored.open || stored.hidden) setArmed(null);
+  }, [stored.open, stored.hidden]);
+
+  // A picked slot: a press on a card starts a ghost drag, and a click on a card puts it in the slot. The view does not
+  // get the press (the card does not move, select, or open). After that, the slot is no longer picked.
   useEffect(() => {
     if (armed === null) return;
+    // Only one bench picks at a time: the compare bench stops its pick.
+    window.dispatchEvent(new CustomEvent<string>("inspoboard-bench-pick", { detail: "link" }));
     let pressed: { itemId: string; x: number; y: number; moved: boolean } | null = null;
     // True from the release of a press on a card to the end of that event task (its mouseup and click).
     let justDropped = false;
@@ -210,7 +222,11 @@ export function LinkBench() {
       pressed = null;
       setGhost(null);
       setOver(null);
-      if (!moved) return;
+      if (!moved) {
+        put({ itemId }, armed);
+        setArmed(null);
+        return;
+      }
       const slot = benchSlotAt(event.clientX, event.clientY);
       if (slot === null) return;
       put({ itemId }, slot === "bench" ? armed : slot);
@@ -331,6 +347,7 @@ export function LinkBench() {
     try {
       const command = pointEnds(session.context, slots[0]!, slots[1]!) ?? linkEnds(session.context, slots[0]!, slots[1]!).command;
       if (!runCommand(command)) return;
+      setArmed(null);
       setSlots((current) => [pinned[0] ? current[0] : null, pinned[1] ? current[1] : null]);
       setMessage(pointing !== null ? "The item points to the text now. ⌘Z undoes it." : "Linked. ⌘Z undoes it.");
     } catch (problem) {
@@ -405,7 +422,7 @@ export function LinkBench() {
         </div>
         {end === null ? (
           <>
-            <div className="link-bench-hint">{armed === slot ? "Drag an item here" : slot === 0 ? "Click to pick a reference" : "Click to pick a target"}</div>
+            <div className="link-bench-hint">{armed === slot ? "Click a card, or drag it here" : slot === 0 ? "Click to pick a reference" : "Click to pick a target"}</div>
             <div className="link-bench-fill">
               <button disabled={passage === null} data-tip={passage === null ? "Select text in a note, a page, a web page, or a PDF first" : `Selected text: “${shorten(passage.quote, 80)}”`} onClick={() => passage !== null && put(passage, slot)}>
                 <TextSelect size={13} /> Selected text
@@ -459,7 +476,7 @@ export function LinkBench() {
         </div>
         {slotView(1)}
       </div>
-      {armed !== null && slots[armed] !== null && <div className="link-bench-message">Drag a card here to replace this end. Esc: stop.</div>}
+      {armed !== null && slots[armed] !== null && <div className="link-bench-message">Click a card, or drag it here, to replace this end. Esc: stop.</div>}
       {message !== null && <div className="link-bench-message">{message}</div>}
       {ghost !== null && (
         <div className="link-bench-ghost" style={{ left: ghost.x + 12, top: ghost.y + 12 }} translate="no" dir="auto">

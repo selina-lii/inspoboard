@@ -33,7 +33,7 @@ import { schemaErrors } from "../src/core/validate";
 import { buildBoardModel } from "../src/ui/board/boardModel";
 import { buildGalaxyModel } from "../src/ui/galaxy/galaxyModel";
 import { scheduleOf } from "../src/ui/dialogs/ScheduleFields";
-import { DATA_INTEGRITY, IDEAS, loadTestContext, ROOT, TOOL_RESEARCH } from "./helpers";
+import { DATA_INTEGRITY, IDEAS, loadTestContext, ROOT } from "./helpers";
 
 const TOOL_PLACE = "p1a1a1a1a1a1";
 const IDEAS_PLACE = "p2b2b2b2b2b2";
@@ -81,7 +81,7 @@ describe("calendar groups", () => {
     // The vault stays valid and writes the new fields.
     expect(schemaErrors("links", context.store.get("links", TOOL_PLACE))).toEqual([]);
     expect(schemaErrors("links", { ...context.store.get("links", TOOL_PLACE)!, until: "2026-01-31" })).toHaveLength(1); // a span cannot have a time
-    expect(decodeVault(encodeVault(context.store, { format: 1, root: ROOT })).store.get("links", TOOL_PLACE)).toMatchObject({ time: "09:30–11:00" });
+    expect(decodeVault(encodeVault(context.store, { format: 2, root: ROOT })).store.get("links", TOOL_PLACE)).toMatchObject({ time: "09:30–11:00" });
   });
 
   it("sets days and time from one From/To schedule; a card on many weeks is one node per week row", () => {
@@ -220,7 +220,7 @@ describe("calendar groups", () => {
     expect(schemaErrors("outlines", context.store.get("outlines", calendarId))).toEqual([]);
     expect(schemaErrors("outlines", { id: "abcdefabcdef", board: ROOT, x: 0, y: 0, type: "calendar", start: "2026-13" })).toHaveLength(1);
     expect(schemaErrors("links", { ...context.store.get("links", TOOL_PLACE)!, day: "2026-1-5" })).toHaveLength(1);
-    const files = encodeVault(context.store, { format: 1, root: ROOT });
+    const files = encodeVault(context.store, { format: 2, root: ROOT });
     const again = decodeVault(files);
     expect(again.problems).toEqual([]);
     expect(again.store.get("outlines", calendarId)).toEqual(context.store.get("outlines", calendarId));

@@ -1,0 +1,19 @@
+[package]
+name = "inspoboard-mathcat"
+version = "0.1.0"
+edition = "2024"
+description = "Helper of the Inspoboard plugin \"Math to words\": MathML to words with MathCAT."
+license = "MIT"
+publish = false
+
+# Not part of the app workspace: the app build never builds this helper.
+[workspace]
+
+[dependencies]
+# MathCAT (MIT): speech from MathML. "include-zip": its rule files are inside the program.
+mathcat = { version = "=0.7.5", features = ["include-zip"] }
+serde_json = "1.0"
+
+[profile.release]
+lto = "thin"
+strip = true

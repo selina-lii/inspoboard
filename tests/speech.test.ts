@@ -1,14 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { readClip, readSentences, type Sentence } from "../src/io/plugins";
 import { readSettings } from "../src/io/settings";
-import { SpeechQueue, type AudioOutput } from "../src/ui/plugins/speechQueue";
+import { AGE_STEP_MS, SpeechQueue, type AudioOutput } from "../src/ui/plugins/speechQueue";
+import { formatListenTime, listenSeconds, wordCount, wordsSeconds, wordsToEnd } from "../src/ui/plugins/listenTime";
 
 /** Audio that ends each clip when the test says so. */
 class FakeAudio implements AudioOutput {
   played: string[] = [];
+  preload?: (url: string) => void;
   rate = 1;
   private finish: (() => void) | null = null;
-  play(url: string): Promise<void> {
+  play(url: string, _started?: () => void): Promise<void> {
     this.played.push(url);
     return new Promise((resolve) => (this.finish = resolve));
   }
@@ -60,7 +62,25 @@ describe("speech queue", () => {
     expect(audio.played).toEqual(["url-s0", "url-s1", "url-s2", "url-s3"]);
     expect(seen).toEqual([0, 1, 2, 3]);
     expect(ended).toBe(true);
-    expect(released).toContain("url-s0");
+    // Played clips stay for a step back (KEEP_BEHIND) until the queue stops.
+    expect(released).toEqual([]);
+  });
+
+  it("loads the next clip while a clip plays (double buffering)", async () => {
+    const audio = new FakeAudio();
+    const preloaded: string[] = [];
+    audio.preload = (url) => preloaded.push(url);
+    const queue = new SpeechQueue(sentences(3), async (sentence) => `url-${sentence.speech}`, audio, { onSentence: () => undefined, onState: () => undefined, onEnd: () => undefined, onError: () => undefined }, () => undefined);
+    queue.start();
+    await flush();
+    // Clip 0 plays; clip 1 is loading in the other element before clip 0 ends.
+    expect(audio.played).toEqual(["url-s0"]);
+    expect(preloaded).toEqual(["url-s1"]);
+    audio.end();
+    await flush();
+    expect(audio.played).toEqual(["url-s0", "url-s1"]);
+    expect(preloaded).toEqual(["url-s1", "url-s2"]);
+    queue.stop();
   });
 
   it("shows loading until the sound starts, not only until the clip is made", async () => {
@@ -88,6 +108,33 @@ describe("speech queue", () => {
     await flush();
     expect(audio.played).toEqual(["s0", "s1"]);
     expect(loading.at(-1)).toBe(false);
+  });
+
+  it("drops the made clips of some sentences ahead and makes them again (formulas after a speed change)", async () => {
+    const audio = new FakeAudio();
+    const fetched: string[] = [];
+    const released: string[] = [];
+    let version = 1;
+    const queue = new SpeechQueue(
+      sentences(4),
+      async (sentence) => (fetched.push(sentence.speech), `${sentence.speech}-v${version}`),
+      audio,
+      { onSentence: () => undefined, onState: () => undefined, onEnd: () => undefined, onError: () => undefined },
+      (url) => released.push(url),
+    );
+    queue.start();
+    await flush();
+    version = 2;
+    // Sentence 0 plays (it stays); sentence 2 is made again.
+    queue.dropAhead([0, 2]);
+    await flush();
+    expect(fetched).toEqual(["s0", "s1", "s2", "s3", "s2"]);
+    expect(released).toEqual(["s2-v1"]);
+    for (let index = 0; index < 3; index += 1) {
+      audio.end();
+      await flush();
+    }
+    expect(audio.played).toEqual(["s0-v1", "s1-v1", "s2-v2", "s3-v1"]);
   });
 
   it("a step starts at the new sentence and the old run stops", async () => {
@@ -164,6 +211,29 @@ describe("speech queue: audio ahead", () => {
     expect(voice.pending.map((clip) => clip.speech)).toEqual(["s0", "s1", "s2"]);
   });
 
+  it("goes on making clips ahead while paused; an other reading takes the voice and the old clips age out", async () => {
+    const released: string[] = [];
+    const first = new SpeechQueue(sentences(8), async (sentence) => sentence.speech, new FakeAudio(), events(), (url) => released.push(url), "window");
+    first.start();
+    first.pause();
+    for (let step = 0; step < 10; step += 1) await flush();
+    const second = new SpeechQueue(sentences(2), async (sentence) => sentence.speech, new FakeAudio(), events(), () => undefined, "window");
+    vi.useFakeTimers();
+    try {
+      second.start();
+      expect(released).toEqual([]);
+      await vi.advanceTimersByTimeAsync(AGE_STEP_MS);
+      // The farthest clip goes first.
+      expect(released).toEqual(["s7"]);
+      await vi.advanceTimersByTimeAsync(AGE_STEP_MS * 2);
+      expect(released).toEqual(["s7", "s6", "s5"]);
+    } finally {
+      vi.useRealTimers();
+      first.stop();
+      second.stop();
+    }
+  });
+
   it("mode all: makes all clips first, then plays", async () => {
     const voice = slowVoice();
     const audio = new FakeAudio();
@@ -226,5 +296,27 @@ describe("ready cursor", () => {
     audio.end();
     await flush();
     expect(ready.at(-1)).toBe(3);
+  });
+});
+
+describe("listen time", () => {
+  it("counts words and CJK characters", () => {
+    expect(wordCount("The quick brown fox — it's 2026.")).toBe(6);
+    expect(wordCount("你好世界")).toBeCloseTo(2.4);
+  });
+
+  it("gives a rough time at a speed", () => {
+    const text = "word ".repeat(165);
+    expect(listenSeconds(text, 1)).toBeCloseTo(60);
+    expect(listenSeconds(text, 2)).toBeCloseTo(30);
+    // The time left: counted one time for all sentences, the same as counting the rest of the text.
+    const sentences = [{ speech: "One two three." }, { speech: "Four five." }, { speech: "Six." }];
+    const after = wordsToEnd(sentences);
+    expect([...after]).toEqual([6, 3, 1, 0]);
+    expect(wordsSeconds(after[1]!, 1.5)).toBeCloseTo(listenSeconds("Four five. Six.", 1.5));
+    expect(formatListenTime(12)).toBe("about 10 s");
+    expect(formatListenTime(60 * 12.4)).toBe("about 12 min");
+    expect(formatListenTime(60 * 80)).toBe("about 1 h 20 min");
+    expect(formatListenTime(60 * 120)).toBe("about 2 h");
   });
 });

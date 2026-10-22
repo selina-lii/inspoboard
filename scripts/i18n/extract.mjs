@@ -32,7 +32,7 @@ const UI_CALLS = new Set(["t", "words", "translate", "confirm", "alert", "notify
 const NAME_FIELD_OWNERS_SKIP = /^(id|key|className|kind|type|view|icon)$/;
 
 /** Calls and members whose string arguments are never UI text (DOM queries, events, storage keys, IPC). */
-const CODE_CALLS = new Set(["querySelector", "querySelectorAll", "closest", "matches", "addEventListener", "removeEventListener", "getItem", "setItem", "removeItem", "invoke", "listen", "emit", "log", "debug", "info", "error", "warn", "getPropertyValue", "setProperty", "createElement", "getAttribute", "setAttribute", "removeAttribute", "hasAttribute", "toggle", "add", "remove", "contains", "getChild", "getChildren", "require", "Error", "TypeError", "RangeError", "plugin_call", "call", "startsWith", "endsWith", "includes", "indexOf", "split", "replace", "replaceAll", "join", "padStart", "test", "match", "matchMedia", "keymap", "of", "has", "get", "set", "delete", "dispatchEvent", "Event", "CustomEvent", "KeyboardEvent", "RegExp", "fetch", "URL", "Blob", "File", "Intl", "toLocaleString", "toLocaleDateString", "toLocaleTimeString", "localeCompare", "execCommand", "postMessage"]);
+const CODE_CALLS = new Set(["logEvent", "logError", "querySelector", "querySelectorAll", "closest", "matches", "addEventListener", "removeEventListener", "getItem", "setItem", "removeItem", "invoke", "listen", "emit", "log", "debug", "info", "error", "warn", "getPropertyValue", "setProperty", "createElement", "getAttribute", "setAttribute", "removeAttribute", "hasAttribute", "toggle", "add", "remove", "contains", "getChild", "getChildren", "require", "Error", "TypeError", "RangeError", "plugin_call", "call", "startsWith", "endsWith", "includes", "indexOf", "split", "replace", "replaceAll", "join", "padStart", "test", "match", "matchMedia", "keymap", "of", "has", "get", "set", "delete", "dispatchEvent", "Event", "CustomEvent", "KeyboardEvent", "RegExp", "fetch", "URL", "Blob", "File", "Intl", "toLocaleString", "toLocaleDateString", "toLocaleTimeString", "localeCompare", "execCommand", "postMessage"]);
 /** JSX attributes that never hold UI text. */
 const CODE_ATTRIBUTES = new Set(["className", "dir", "role", "type", "key", "translate", "d", "viewBox", "fill", "stroke", "transform", "style", "target", "sandbox", "inputMode", "side", "color", "value", "titleClassName", "lineClassName", "handleClassName", "id", "name", "href", "src", "rel", "lang", "accept", "autoComplete", "spellCheck", "preserveAspectRatio", "vectorEffect", "strokeLinecap", "strokeLinejoin", "fillRule", "clipRule", "position", "layoutKey", "resetKey", "data-theme", "method", "htmlFor", "pattern"]);
 /** Object fields that never hold UI text. */
@@ -273,7 +273,7 @@ function sourceFiles() {
  * Rust folders whose text shows in the UI: the backend (messages, the menu bar) and the plugins (names, options,
  * progress, errors). Tests (after #[cfg(test)]) do not count.
  */
-const RUST_SOURCES = ["src-tauri/src", "plugins/chinese/src", "plugins/translate/src", "plugins/voice/src", "plugins/web/src"];
+const RUST_SOURCES = ["src-tauri/src", "plugins/chinese/src", "plugins/compare/src", "plugins/ask/src", "plugins/mathocr/src", "plugins/translate/src", "plugins/voice/src", "plugins/web/src"];
 /** JavaScript plugins (names, options, errors). */
 const PLUGIN_JS_SOURCES = ["plugins/math/src"];
 

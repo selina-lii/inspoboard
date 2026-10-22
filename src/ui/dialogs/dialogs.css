@@ -44,6 +44,8 @@
 }
 .setting { display: flex; gap: 10px; align-items: flex-start; padding: 10px 14px; cursor: pointer; }
 .setting input { margin-top: 3px; accent-color: var(--accent); }
+/* A setting that belongs to the setting above it (indented). */
+.setting.setting-sub { padding-left: 38px; align-items: center; }
 .setting-help { display: block; color: var(--text-muted); font-size: 12px; margin-top: 2px; }
 .setting.text-setting { align-items: center; justify-content: space-between; cursor: default; }
 .setting-input { width: 180px; flex: none; }
@@ -52,6 +54,8 @@
 .fields-row input.invalid { border-color: var(--danger); }
 .fields-buttons { display: flex; justify-content: flex-end; gap: 8px; padding: 8px 14px 0; }
 .action-item-row { display: inline-flex; align-items: center; gap: 8px; }
+.dialog-kind { display: flex; align-items: center; gap: 8px; margin: 8px 12px 0; font-size: 13px; color: var(--text-muted); }
+.dialog-kind select { font-size: 13px; }
 .todo-done-small { width: 18px; height: 18px; padding: 0; border-radius: 4px; border: 1.5px solid; color: transparent; display: inline-flex; align-items: center; justify-content: center; flex: none; }
 .todo-done-small:hover { color: #111; }
 .setting-unit { display: inline-flex; align-items: center; gap: 6px; flex: none; font-size: 12px; color: var(--text-muted); }
@@ -100,3 +104,36 @@
 .trash-buttons { display: inline-flex; gap: 2px; opacity: 0.5; }
 .dialog-list li.active .trash-buttons, .trash-buttons:hover { opacity: 1; }
 .trash-buttons .danger:hover { color: var(--danger); }
+
+/* Search and replace (SearchDialog.tsx). */
+.search-dialog { width: min(640px, 92vw); }
+.search-rows { display: flex; flex-direction: column; gap: 6px; padding: 8px 12px 6px; }
+.search-row { display: flex; align-items: center; gap: 4px; }
+.search-expand { flex: none; transition: transform 0.12s; }
+.search-expand.open { transform: rotate(90deg); }
+.search-expand-space { flex: none; width: 24px; }
+.search-field { flex: 1; min-width: 0; display: flex; align-items: center; gap: 2px; padding: 2px 4px 2px 0; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--bg); }
+.search-field:focus-within { border-color: var(--accent); }
+.search-field.invalid { border-color: var(--danger); }
+.search-input { flex: 1; min-width: 0; border: 0; background: none; box-shadow: none; outline: none; font-size: 15px; padding: 6px 8px; }
+.search-toggle.active { background: var(--accent-soft); color: var(--accent); }
+.search-meta { display: flex; align-items: center; gap: 10px; padding-left: 28px; font-size: 12px; min-height: 22px; }
+.search-where { font-size: 12px; padding: 1px 4px; }
+.search-error { color: var(--danger); }
+.search-status { padding-left: 28px; font-size: 12px; color: var(--text-muted); }
+.search-hit-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.search-hit-replace { opacity: 0; flex: none; }
+.dialog-list li.active .search-hit-replace, .dialog-list li:hover .search-hit-replace { opacity: 1; }
+.dialog-list mark.search-old { text-decoration: line-through; background: color-mix(in srgb, var(--danger) 22%, transparent); }
+.dialog-list ins.search-new { text-decoration: none; background: color-mix(in srgb, #3fb950 26%, transparent); color: var(--text); border-radius: 2px; }
+.search-codes { position: relative; display: inline-flex; flex: none; }
+.search-code-list { position: absolute; top: calc(100% + 4px); right: 0; z-index: 10; min-width: 220px; margin: 0; padding: 4px; list-style: none; background: var(--bg-panel); border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3); font-size: 12px; }
+.search-code-list li { display: flex; gap: 10px; align-items: baseline; padding: 4px 8px; border-radius: 4px; cursor: pointer; }
+.search-code-list li:hover { background: var(--bg-hover); }
+.search-code-list code { min-width: 52px; color: var(--accent); }
+
+/* Media sources (SettingsDialog.tsx). */
+.media-sources { display: flex; flex-direction: column; gap: 4px; }
+.media-source { display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: 6px; }
+.media-source:last-child { grid-template-columns: 1fr auto auto; }
+.media-source-host { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

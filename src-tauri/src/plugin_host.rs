@@ -34,6 +34,9 @@ pub struct Manifest {
     pub exec: String,
     #[serde(default)]
     pub capabilities: Vec<String>,
+    /// A lab plugin: experimental. The app marks it as such.
+    #[serde(default)]
+    pub lab: bool,
 }
 
 /// A plugin as the frontend sees it.
@@ -45,6 +48,7 @@ pub struct PluginInfo {
     pub title: String,
     pub version: String,
     pub capabilities: Vec<String>,
+    pub lab: bool,
     /// Why the plugin cannot start, or None.
     pub problem: Option<String>,
 }
@@ -213,9 +217,10 @@ pub fn scan(folder: &Path) -> Vec<PluginInfo> {
                     title: manifest.title,
                     version: manifest.version,
                     capabilities: manifest.capabilities,
+                    lab: manifest.lab,
                     problem: None,
                 },
-                Err(problem) => PluginInfo { title: name.clone(), name, version: String::new(), capabilities: Vec::new(), problem: Some(problem) },
+                Err(problem) => PluginInfo { title: name.clone(), name, version: String::new(), capabilities: Vec::new(), lab: false, problem: Some(problem) },
             }
         })
         .collect();
@@ -237,7 +242,7 @@ fn start(app: &AppHandle, name: &str) -> Result<Running, String> {
     let manifest = read_manifest(&folder)?;
     let program = program_path(&folder, &manifest)?;
     let mut command = Command::new(&program);
-    command.current_dir(&folder).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit());
+    command.current_dir(&folder).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -247,6 +252,16 @@ fn start(app: &AppHandle, name: &str) -> Result<Running, String> {
     let mut child = command.spawn().map_err(|error| format!("{}: {error}", program.display()))?;
     let stdin: ChildStdin = child.stdin.take().ok_or("The plugin has no input.")?;
     let stdout = child.stdout.take().ok_or("The plugin has no output.")?;
+    crate::debug_log::write("plugin", &format!("{name}: started."));
+    // The error output of the plugin goes into the session log (at most 200 lines for each start).
+    if let Some(stderr) = child.stderr.take() {
+        let plugin = name.to_string();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stderr).lines().map_while(Result::ok).take(200) {
+                crate::debug_log::write("plugin", &format!("{plugin} (error output): {line}"));
+            }
+        });
+    }
     let emitter = app.clone();
     let plugin = name.to_string();
     let on_notify = Box::new(move |message: Value| {
@@ -314,8 +329,16 @@ pub fn list_plugins(app: AppHandle, state: State<'_, PluginState>) -> Vec<Plugin
 pub async fn plugin_call(app: AppHandle, name: String, method: String, params: Value) -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<PluginState>();
-        let connection = connection(&app, &state, &name)?;
-        connection.call(&method, params)
+        let start = std::time::Instant::now();
+        let result = connection(&app, &state, &name).and_then(|connection| connection.call(&method, params));
+        // Slow calls and errors go into the session log (no params: they can have text of notes).
+        let seconds = start.elapsed().as_secs_f64();
+        match &result {
+            Err(error) => crate::debug_log::write("plugin", &format!("{name}.{method} failed after {seconds:.1} s: {error}")),
+            Ok(_) if seconds >= 2.0 => crate::debug_log::write("plugin", &format!("{name}.{method}: {seconds:.1} s")),
+            Ok(_) => {}
+        }
+        result
     })
     .await
     .map_err(|error| error.to_string())?

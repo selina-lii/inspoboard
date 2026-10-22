@@ -1,7 +1,8 @@
 // A right-click menu. The board and the editor use it. Esc, a click outside, or a choice closes it.
 
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { useDismiss } from "./useDismiss";
 
 export type MenuEntry =
   | { kind?: "item"; label: string; icon?: ReactNode; disabled?: boolean; onSelect(): void }
@@ -27,25 +28,7 @@ export function ContextMenu({ request, onClose }: { request: MenuRequest; onClos
     });
   }, [request]);
 
-  useEffect(() => {
-    const onPointerDown = (event: PointerEvent) => {
-      if (frame.current !== null && !frame.current.contains(event.target as Node)) onClose();
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.stopPropagation();
-        onClose();
-      }
-    };
-    window.addEventListener("pointerdown", onPointerDown, true);
-    window.addEventListener("keydown", onKeyDown, true);
-    window.addEventListener("blur", onClose);
-    return () => {
-      window.removeEventListener("pointerdown", onPointerDown, true);
-      window.removeEventListener("keydown", onKeyDown, true);
-      window.removeEventListener("blur", onClose);
-    };
-  }, [onClose]);
+  useDismiss(true, frame, onClose, { capture: true, blur: true });
 
   return createPortal(
     <div ref={frame} className="context-menu" role="menu" style={position} onContextMenu={(event) => event.preventDefault()}>
@@ -59,7 +42,7 @@ export function ContextMenu({ request, onClose }: { request: MenuRequest; onClos
               {entry.choices.map((choice) => (
                 <button
                   key={choice.id}
-                  className={choice.id === entry.current ? "active" : undefined}
+                  className={`${choice.id === entry.current ? "active" : ""}${choice.color !== undefined ? " dot" : ""}` || undefined}
                   style={choice.color === undefined ? undefined : { color: choice.color }}
                   data-tip={choice.tip}
                   aria-pressed={choice.id === entry.current}

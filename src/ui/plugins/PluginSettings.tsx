@@ -39,6 +39,7 @@ export function PluginSettings() {
               <Icon size={14} options={plugins.optionsOf(plugin.name)} />
               <span>{plugin.details?.title ?? plugin.title}</span>
               <span className="muted">{plugin.version}</span>
+              {plugin.lab === true && <span className="plugin-lab" data-tip="Experimental: it can change or go away.">Lab</span>}
             </div>
             {open && plugin.details?.description !== undefined && plugin.details.description !== "" && <div className="setting-help">{plugin.details.description}</div>}
             {plugin.error !== null && <div className="plugin-error">{plugin.error}</div>}

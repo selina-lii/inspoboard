@@ -56,7 +56,7 @@ describe("trash", () => {
   it("saves and reads the trash fields (valid records)", () => {
     const context = loadTestContext();
     run(context, removeFromBoard(context, ["p1a1a1a1a1a1"]));
-    const { store, problems } = decodeVault(encodeVault(context.store, { format: 1, root: ROOT }));
+    const { store, problems } = decodeVault(encodeVault(context.store, { format: 2, root: ROOT }));
     expect(problems.filter((problem) => problem.severity === "error")).toEqual([]);
     expect(store.get("items", TOOL_RESEARCH)!.trashedFrom).toEqual(context.store.get("items", TOOL_RESEARCH)!.trashedFrom);
   });

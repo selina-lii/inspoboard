@@ -1,6 +1,6 @@
 // Copy and paste of cards (⌘C / ⌘V, or Ctrl): a paste makes new items, copies of the copied ones.
 // See docs/SPEC.md section 7.1.
-// - For now only small items (note, text, comment, web link, action item, flashcard, quote) and pages can be copied.
+// - For now only small items (note, text, comment, URL, action item, flashcard, quote) and pages can be copied.
 //   Boards, outlines, and calendars cannot (an item with a board, or a group frame).
 // - The copy is taken at ⌘C: later changes to the items do not change it.
 // - A new item gets the name, the text, the date, the web address, and the signature of the copied item, and a card
@@ -9,13 +9,16 @@
 //   item). A link to an item ("[label](item:<id>)") stays. Highlights, scribbles, comments, and links stay with the
 //   copied item.
 // - A link object is a full copy (SPEC 1.1): its saved web page or PDF, its marks (the caller copies the files: see
-//   `webCopies`), and the small items inside it (new items).
+//   `webCopies`), and the small items inside it (new items, with the replies of comments).
+// - A page is a full copy too: the small items inside it are new items in the new page.
 // - One paste is one command (one undo).
 
 import { makeOp, type Command, type Op } from "./commands";
 import type { ActionContext } from "./actions";
 import type { GraphIndex } from "./graph";
 import type { Store } from "./store";
+import { threadOf } from "./actions";
+import { insideEntries } from "./inside";
 import type { Id, InsideLink, ItemRecord, PlaceLink, ViewStyle } from "./types";
 
 /** The kinds of card that can be copied. */
@@ -26,9 +29,12 @@ export type CopiedCard = {
   item: ItemRecord;
   body: string;
   place: Pick<PlaceLink, "x" | "y" | "w" | "h" | "view" | "color" | "expanded" | "marks">;
-  /** A link object: the small items inside it (their fields at ⌘C, and their inside links). */
-  inside?: { item: ItemRecord; body: string; link: InsideLink }[];
+  /** A link object or a page: the small items inside it (their fields at ⌘C, and their inside links). */
+  inside?: CopiedInside[];
 };
+
+/** A small item inside a copied home. `replies`: the replies under a comment (each `on` an item of the thread). */
+export type CopiedInside = { item: ItemRecord; body: string; link: Omit<InsideLink, "id" | "from" | "to">; replies: { item: ItemRecord; body: string }[] };
 
 const RELATION_TEXT_LINK = /\[([^\]\n]*)\]\(link:[0-9a-z]{12}\)/g;
 
@@ -49,15 +55,29 @@ export function copyCards(context: { store: Store; graph: GraphIndex }, placeIds
     if (place.expanded !== undefined) card.expanded = place.expanded;
     if (place.marks !== undefined) card.marks = place.marks;
     const copied: CopiedCard = { item: { ...item }, body: context.store.get("texts", place.to)?.body ?? "", place: card };
-    if (item.url !== undefined) {
-      copied.inside = context.graph.insideOf(item.id).flatMap((link) => {
-        const inner = context.store.get("items", link.to);
-        return inner === undefined ? [] : [{ item: { ...inner }, body: context.store.get("texts", link.to)?.body ?? "", link: { ...link } }];
-      });
+    if (item.url !== undefined || place.view === "page") {
+      const inside = copyInside(context, item.id);
+      if (inside.length > 0) copied.inside = inside;
     }
     out.push(copied);
   }
   return out;
+}
+
+/** The small items inside a home, as copies. */
+function copyInside(context: { store: Store; graph: GraphIndex }, homeId: Id): CopiedInside[] {
+  const textOf = (id: Id) => context.store.get("texts", id)?.body ?? "";
+  return insideEntries(context.store, context.graph, homeId).map((entry) => {
+    const { id: _id, from: _from, to: _to, ...link } = entry.link;
+    const item: ItemRecord = { ...entry.item };
+    const replies = threadOf(context, entry.item.id)
+      .slice(1)
+      .flatMap((id) => {
+        const reply = context.store.get("items", id);
+        return reply === undefined ? [] : [{ item: { ...reply }, body: textOf(id) }];
+      });
+    return { item, body: textOf(entry.item.id), link, replies };
+  });
 }
 
 /**
@@ -97,7 +117,7 @@ export function pasteCards(context: ActionContext, cards: readonly CopiedCard[],
     ops.push(makeOp("items", itemId, null, item), makeOp("texts", itemId, null, { id: itemId, body }), makeOp("links", placeId, null, place));
     placeIds.push(placeId);
     if (card.item.url !== undefined) webCopies.push({ from: card.item.id, to: itemId });
-    // The small items inside a link object: new items, inside the new link object.
+    // The small items inside a link object or a page: new items, inside the new home (with their replies).
     for (const inner of card.inside ?? []) {
       const innerId = context.newId();
       const linkId = context.newId();
@@ -106,8 +126,16 @@ export function pasteCards(context: ActionContext, cards: readonly CopiedCard[],
       ops.push(
         makeOp("items", innerId, null, copy),
         makeOp("texts", innerId, null, { id: innerId, body: inner.body.replace(RELATION_TEXT_LINK, (_whole, label: string) => label) }),
-        makeOp("links", linkId, null, { ...inner.link, id: linkId, from: itemId, to: innerId }),
+        makeOp("links", linkId, null, { ...inner.link, id: linkId, from: itemId, to: innerId } as InsideLink),
       );
+      const newIds = new Map<Id, Id>([[inner.item.id, innerId]]);
+      for (const reply of inner.replies) newIds.set(reply.item.id, context.newId());
+      for (const reply of inner.replies) {
+        const replyId = newIds.get(reply.item.id)!;
+        const copyReply: ItemRecord = { ...reply.item, id: replyId, created: now, on: newIds.get(reply.item.on ?? "") ?? innerId };
+        delete copyReply.modified;
+        ops.push(makeOp("items", replyId, null, copyReply), makeOp("texts", replyId, null, { id: replyId, body: reply.body }));
+      }
     }
   }
   return { command: { label: cards.length > 1 ? `Paste ${cards.length} items` : "Paste item", ops }, placeIds, webCopies };

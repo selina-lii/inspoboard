@@ -1,6 +1,6 @@
 // Vault settings. Each setting applies at once.
 
-import { BACKUP_ALERT_RANGE, PAGE_WIDTH_RANGE, UI_FONT_WEIGHT_RANGE, type ThemeSetting } from "../../io/settings";
+import { BACKUP_ALERT_RANGE, PAGE_WIDTH_RANGE, UI_FONT_WEIGHT_RANGE, type DetachCopies, type ThemeSetting } from "../../io/settings";
 import { MovablePanel } from "../app/movable";
 import { useEffect, useState, type ReactNode } from "react";
 import { CommitField } from "../app/fields";
@@ -9,6 +9,9 @@ import { PluginSettings } from "../plugins/PluginSettings";
 import { FOLDED_BUTTONS, ZEN_BUTTONS } from "../app/zen";
 import { usePlugins } from "../plugins/pluginsContext";
 import { isUiLanguage, UI_LANGUAGES } from "../i18n/i18n";
+import { MEDIA_KIND_LABELS, normalizeHost, type MediaSource } from "../../core/media";
+import { MEDIA_KINDS, type MediaKind } from "../../core/types";
+import { X } from "lucide-react";
 import "./dialogs.css";
 
 export type SettingsSection = "appearance" | "cards" | "topBar" | "zen" | "you" | "plugins";
@@ -119,7 +122,7 @@ export function SettingsDialog({ section: firstSection = "appearance", onClose }
                     checked={settings.showItemDates}
                     onChange={(event) => void session.updateSettings({ showItemDates: event.target.checked })}
                   />
-                  <span>Item dates</span>
+                  <span>Show file details</span>
                 </label>
                 <label className="setting">
                   <input
@@ -129,6 +132,7 @@ export function SettingsDialog({ section: firstSection = "appearance", onClose }
                   />
                   <SettingName tip="With inverted colors (the contrast button of a web page): the pictures invert too. Off: pictures keep their colors. Pictures in a PDF always invert (they are part of the page).">Inverted colors: invert pictures too</SettingName>
                 </label>
+                <MediaSourcesSetting />
               </>
             )}
             {section === "topBar" && (
@@ -196,7 +200,39 @@ export function SettingsDialog({ section: firstSection = "appearance", onClose }
                 </label>
               </>
             )}
-            {section === "plugins" && (plugins.available ? <PluginSettings /> : <div className="setting setting-help">Plugins work only in the app.</div>)}
+            {section === "plugins" && (
+              <>
+                <div className="setting-help">Built-in plugins</div>
+                <label className="setting">
+                  <input type="checkbox" checked={settings.buzzies} onChange={(event) => void session.updateSettings({ buzzies: event.target.checked })} />
+                  <SettingName tip="Hides your text on the screen, and icons and pictures blur: a screenshot shows the structure, not the words. The app works as usual. Open it from the More menu (⋯); Esc ends it.">Buzzies mode</SettingName>
+                </label>
+                {settings.buzzies && (
+                  <label className="setting setting-sub">
+                    <SettingName tip="Glyphs: each word becomes symbols and blocks. Blur: the text blurs evenly. The chip of the mode changes it for one time.">Buzzies mode: style</SettingName>
+                    <select value={settings.buzzStyle} onChange={(event) => void session.updateSettings({ buzzStyle: event.target.value as "glyphs" | "blur" })}>
+                      <option value="glyphs">Glyphs</option>
+                      <option value="blur">Blur</option>
+                    </select>
+                  </label>
+                )}
+                <label className="setting">
+                  <input type="checkbox" checked={settings.tray} onChange={(event) => void session.updateSettings({ tray: event.target.checked })} />
+                  <SettingName tip="A sorting map pulls the items of collections, calendars, or outlines out a few at a time, as references, to sort them on a new board (for example a mind map). Right-click a collection or a group frame → Make a sorting map. The items stay in their sources.">Sorting tray</SettingName>
+                </label>
+                {settings.tray && (
+                  <label className="setting setting-sub">
+                    <SettingName tip="A processing map (a detached sorting map): when its cards become copies of the originals. On first edit: a card becomes a copy when you open it to edit (an unchanged copy goes again). All now: all cards at detach. New pulls only: later pulls make copies.">Processing maps: make copies</SettingName>
+                    <select value={settings.detachCopies} onChange={(event) => void session.updateSettings({ detachCopies: event.target.value as DetachCopies })}>
+                      <option value="edit">On first edit</option>
+                      <option value="all">All now</option>
+                      <option value="new">New pulls only</option>
+                    </select>
+                  </label>
+                )}
+                {plugins.available ? <PluginSettings /> : <div className="setting setting-help">Plugins work only in the app.</div>}
+              </>
+            )}
           </div>
         </div>
       </MovablePanel>
@@ -210,5 +246,59 @@ function SettingName({ tip, children }: { tip: string; children: ReactNode }) {
     <span className="setting-name has-tip" data-tip={tip}>
       {children}
     </span>
+  );
+}
+
+
+/**
+ * Media sources (SPEC 7.14): the sites whose links become media items when pasted on a board. Each site can be off,
+ * removed, or added. The list is the user's: the app has no other rule for media links.
+ */
+function MediaSourcesSetting() {
+  const session = useSession();
+  const sources = useSessionState().settings.mediaSources;
+  const [host, setHost] = useState("");
+  const [kind, setKind] = useState<MediaKind>("audio");
+  const save = (next: MediaSource[]) => void session.updateSettings({ mediaSources: next });
+  const change = (index: number, patch: Partial<MediaSource>) => save(sources.map((source, at) => (at === index ? { ...source, ...patch } : source)));
+  const added = normalizeHost(host);
+  const add = () => {
+    if (added === null || sources.some((source) => source.host === added)) return;
+    save([...sources, { host: added, kind, on: true }]);
+    setHost("");
+  };
+  return (
+    <div className="setting setting-block media-sources">
+      <SettingName tip="A link from one of these sites, pasted on a board, becomes a media item (a card with a cover, a name, and an artist). The kind is the kind of its items.">Media sources</SettingName>
+      {sources.map((source, index) => (
+        <div key={source.host} className="media-source">
+          <input type="checkbox" checked={source.on} aria-label={source.host} onChange={(event) => change(index, { on: event.target.checked })} />
+          <span className="media-source-host" translate="no">{source.host}</span>
+          <select value={source.kind} onChange={(event) => change(index, { kind: event.target.value as MediaKind })}>
+            {MEDIA_KINDS.map((value) => (
+              <option key={value} value={value}>
+                {MEDIA_KIND_LABELS[value]}
+              </option>
+            ))}
+          </select>
+          <button className="icon-button small" data-tip="Remove this site" data-tip-end onClick={() => save(sources.filter((_, at) => at !== index))}>
+            <X size={12} />
+          </button>
+        </div>
+      ))}
+      <div className="media-source">
+        <input value={host} placeholder="Site, for example tidal.com" spellCheck={false} onChange={(event) => setHost(event.target.value)} onKeyDown={(event) => event.key === "Enter" && add()} />
+        <select value={kind} onChange={(event) => setKind(event.target.value as MediaKind)}>
+          {MEDIA_KINDS.map((value) => (
+            <option key={value} value={value}>
+              {MEDIA_KIND_LABELS[value]}
+            </option>
+          ))}
+        </select>
+        <button disabled={added === null || sources.some((source) => source.host === added)} onClick={add}>
+          Add
+        </button>
+      </div>
+    </div>
   );
 }

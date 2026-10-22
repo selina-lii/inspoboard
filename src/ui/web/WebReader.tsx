@@ -6,16 +6,20 @@
 // Tools (in the main tool bar): read (a click on text reads aloud from there), select, highlight, pen, eraser, comment, note.
 // Links: ⌘-click (Ctrl-click) saves and opens the linked page. A click on a "#" link goes to that part of the page.
 
+import { ctrlClickAsCommandClick } from "../app/keys";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { COLUMN, firstTop, pageParagraphs, TranslationColumn, useColumnWidth, usePageTranslation } from "./pageTranslation";
+import { COLUMN, layoutParagraphs, textUnits, TranslationColumn, useColumnWidth, usePageTranslation, type PageParagraph } from "./pageTranslation";
 import { pageCounterpart } from "../plugins/sentencePairs";
 import { nanoid } from "nanoid";
-import { useSession, useSessionState } from "../app/sessionContext";
+import { useSessionState } from "../app/sessionContext";
 import { reportPassage } from "../app/passages";
-import { ReaderLinks, useLinkMarks } from "./linkMarks";
+import { ReaderLinkShadows, ReaderLinks, useLinkMarks } from "./linkMarks";
+import { FormulaNotes, type FormulaNote } from "./formulaNotes";
+import { FormulaButton } from "../plugins/FormulaButton";
+import { useFormulaWords } from "../plugins/formulaWords";
 import { offerSelection } from "../plugins/SelectionTranslate";
 import { usePlugins } from "../plugins/pluginsContext";
-import { useSpeech, useSpokenSentence, WEB_SOURCE, type ReadMode } from "../plugins/speech";
+import { useReadyState, useSpeechNow, useSpokenSentence, WEB_SOURCE, type ReadMode } from "../plugins/speech";
 import { useWebPages, type HtmlPage } from "./WebPages";
 import { findQuote, isWebUrl, placeHighlight, WIDTH_RANGE, type NoteColor, type WebNotes } from "./savedPages";
 import { armSmallByKey, type TextAnchor } from "../app/smallTool";
@@ -36,8 +40,8 @@ type Props = { page: HtmlPage; onClose(): void; onSaveAgain(): void };
 
 export function WebReader({ page, onClose, onSaveAgain }: Props) {
   const { readOnly } = useSessionState();
-  const session = useSession();
-  const speech = useSpeech();
+  // Read aloud, read at the time of a call: the reader does not render again at each change of read aloud.
+  const speechNow = useSpeechNow();
   const plugins = usePlugins();
   const web = useWebPages();
   const frame = useRef<HTMLIFrameElement>(null);
@@ -52,7 +56,7 @@ export function WebReader({ page, onClose, onSaveAgain }: Props) {
     setModeSticky(keep);
   }, []);
   const [color, setColor] = useState<NoteColor>("yellow");
-  const { notes, notesRef, loaded: notesLoaded, change: changeNotes, step, problem } = useReaderNotes(page.key, page.notesFrom);
+  const { notes, notesRef, loaded: notesLoaded, change: changeNotes, step, problem } = useReaderNotes(page.key);
   /** The selected text of the page (its place in the page text), for a new small item that points to it. */
   const selectedText = useRef<TextAnchor | null>(null);
   const [title, setTitle] = useState("");
@@ -63,7 +67,8 @@ export function WebReader({ page, onClose, onSaveAgain }: Props) {
   const spoken = useSpokenSentence(sourceId);
   const speaker = plugins.plugins.find((plugin) => plugin.details !== null && plugin.capabilities.includes("speak-text")) ?? null;
   // The translation column (pageTranslation.tsx): one paragraph for each line of the page text.
-  const paragraphs = useMemo(() => pageParagraphs(index.current?.text ?? ""), [loaded]);
+  // The paragraphs of the translation: from the layout of the page (set below, when the page is ready).
+  const [paragraphs, setParagraphs] = useState<PageParagraph[]>([]);
   const translation = usePageTranslation(page.key, paragraphs);
   const [columnHeight, setColumnHeight] = useState(0);
   const column = useColumnWidth();
@@ -91,8 +96,8 @@ export function WebReader({ page, onClose, onSaveAgain }: Props) {
   const shownZoom = zoom ?? 1;
 
   // The newest values for the frame event handlers (they are added one time per load).
-  const live = useRef({ mode, color, speech, speaker, change, step, web, readOnly, zoom: shownZoom, fitZoom });
-  live.current = { mode, color, speech, speaker, change, step, web, readOnly, zoom: shownZoom, fitZoom };
+  const live = useRef({ mode, color, speechNow, speaker, change, step, web, readOnly, zoom: shownZoom, fitZoom });
+  live.current = { mode, color, speechNow, speaker, change, step, web, readOnly, zoom: shownZoom, fitZoom };
 
   // Find in page (⌘F): the hook needs the mark boxes (below), the keys need it here.
   const findRef = useRef<PageFind | null>(null);
@@ -113,7 +118,8 @@ export function WebReader({ page, onClose, onSaveAgain }: Props) {
   const [notice, setNotice] = useState<string | null>(null);
   const readFrom = useCallback(
     (offset: number, until?: number) => {
-      const { speech: reader, speaker: plugin } = live.current;
+      const { speechNow, speaker: plugin } = live.current;
+      const reader = speechNow();
       const text = index.current?.text ?? "";
       if (reader === null || plugin === null) {
         setNotice("Read aloud needs the Read aloud plugin (Settings → Plugins).");
@@ -272,12 +278,14 @@ export function WebReader({ page, onClose, onSaveAgain }: Props) {
         const caret = doc.caretRangeFromPoint(event.clientX, event.clientY);
         const offset = caret === null || index.current === null ? null : offsetAt(index.current, caret.startContainer, caret.startOffset);
         // Only while it reads this page (Read aloud started it): the click moves the reading there. Else a click does not read.
-        const reader = live.current.speech;
+        const reader = live.current.speechNow();
         if (offset !== null && reader?.state?.sourceId === sourceId && !reader.state.preparing) reader.clickSeek(offset);
       },
       true,
     );
 
+    // Ctrl+click works as ⌘-click (links, linked passages): on macOS it is a right-click, with no click event.
+    doc.addEventListener("contextmenu", (event) => void ctrlClickAsCommandClick(event), true);
     doc.addEventListener("mouseup", () => {
       const selection = doc.getSelection();
       const pageItem: string | undefined = page.itemId;
@@ -318,7 +326,7 @@ export function WebReader({ page, onClose, onSaveAgain }: Props) {
     });
 
     doc.addEventListener("keydown", (event) => {
-      if (live.current.speech?.handleKey(event) === true) return;
+      if (live.current.speechNow()?.handleKey(event) === true) return;
       if (readerKey(event, keyActionsRef.current)) return;
       // The keys of the small kinds (N, M, W, I, F, Q) also work while the page frame has the focus.
       if (!event.metaKey && !event.ctrlKey && !event.altKey && !isTextTarget(event.target) && armSmallByKey(event.key.toLowerCase())) {
@@ -381,6 +389,33 @@ export function WebReader({ page, onClose, onSaveAgain }: Props) {
     const range = index.current === null ? null : rangeOf(index.current, start, end);
     return range === null ? [] : boxesOf(range, { x: 0, y: 0 }, 1);
   }, []);
+  // The formula notes: the words of each formula of the page at its left (view only).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const pageFormulas = useMemo(() => index.current?.formulas ?? [], [loaded]);
+  const formulaWords = useFormulaWords(settings.formulaNotes && pageFormulas.length > 0 ? pageFormulas : null);
+  const formulaNotes: FormulaNote[] =
+    formulaWords === null
+      ? []
+      : pageFormulas.flatMap((formula, at) => {
+          // The visible formula (its box in page units: the frame does not scroll), else its text range.
+          const shown = index.current?.formulaElements?.[at]?.getBoundingClientRect();
+          if (shown !== undefined && shown.width > 1 && shown.height > 1) {
+            return [{ key: `${at}:${formula.start}`, box: { left: shown.left, top: shown.top, width: shown.width, height: shown.height }, words: formulaWords[at] ?? "", tex: formula.tex ?? "" }];
+          }
+          const parts = boxes(formula.start, formula.end);
+          if (parts.length === 0) return [];
+          const top = Math.min(...parts.map((box) => box.top));
+          const bottom = Math.max(...parts.map((box) => box.top + box.height));
+          const left = Math.min(...parts.map((box) => box.left));
+          const right = Math.max(...parts.map((box) => box.left + box.width));
+          return [{ key: `${at}:${formula.start}`, box: { left, top, width: right - left, height: bottom - top }, words: formulaWords[at] ?? "", tex: formula.tex ?? "" }];
+        });
+  // The paragraphs of the translation, from the layout of the page (pageTranslation.tsx).
+  useEffect(() => {
+    const value = index.current;
+    setParagraphs(value === null ? [] : layoutParagraphs(value.text, textUnits(value.text), boxes, false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded, height, width, boxes]);
   const highlightMarks = useMemo<Mark[]>(() => {
     if (index.current === null) return [];
     return notes.highlights.flatMap((highlight) => {
@@ -407,7 +442,7 @@ export function WebReader({ page, onClose, onSaveAgain }: Props) {
   const linkMarks = useLinkMarks(page.itemId, pageText, boxes, `${loaded}:${height}`);
   followRef.current = linkMarks.follow;
   // The "ready" cursor of read aloud (where the ready audio ends), if the setting shows it.
-  const readyMark = readyMarkOf(useSpeech()?.state, sourceId, settings.speechShowReady, boxes);
+  const readyMark = readyMarkOf(useReadyState(sourceId, settings.speechShowReady), sourceId, settings.speechShowReady, boxes);
   const marks = [...highlightMarks, ...linkMarks.marks, ...(spokenMark === null ? [] : [spokenMark]), ...(readyMark === null ? [] : [readyMark]), ...find.marks];
 
   return (
@@ -428,7 +463,12 @@ export function WebReader({ page, onClose, onSaveAgain }: Props) {
         onZoom={(value) => setZoom(clampZoom(value))}
         onFit={() => fitPage()}
         onSaveAgain={web?.canSave === true ? onSaveAgain : undefined}
-        extra={<ReaderLinks itemId={page.itemId} />}
+        extra={
+          <>
+            {pageFormulas.length > 0 && plugins.plugins.some((plugin) => plugin.details !== null && plugin.capabilities.includes("math-text")) && <FormulaButton count={pageFormulas.length} />}
+            <ReaderLinks itemId={page.itemId} />
+          </>
+        }
       />
       <FindBar find={find} />
       {problem !== null && <div className="plugin-error web-reader-problem">{problem}</div>}
@@ -451,12 +491,15 @@ export function WebReader({ page, onClose, onSaveAgain }: Props) {
           notes={notes}
           change={change}
           marks={marks}
-          focus={spokenMark?.boxes[0] ?? null}
+          focus={spokenMark?.boxes ?? null}
+          focusKey={spokenStart}
           findFocus={find.focus}
           onTyping={() => (mode === "comment" || mode === "note") && setMode("select")}
           onPlaced={() => !modeSticky && setMode("select")}
           onZoom={(value) => setZoom(value)}
           apiRef={sheet}
+          leftNotes={settings.formulaNotes && formulaNotes.length > 0 ? <FormulaNotes notes={formulaNotes} margin={margin} /> : null}
+          shadows={<ReaderLinkShadows placed={linkMarks.placed} margin={margin} pageWidth={Math.min(WIDTH_RANGE.max, width)} side={translation.texts === null ? "right" : "left"} />}
           side={
             translation.texts === null
               ? null
@@ -469,8 +512,7 @@ export function WebReader({ page, onClose, onSaveAgain }: Props) {
                       left={left}
                       paragraphs={paragraphs}
                       texts={translation.texts!}
-                      topOf={(paragraph) => firstTop(boxes(paragraph.start, Math.min(paragraph.end, paragraph.start + 1)))}
-                      layoutKey={`${loaded}:${height}`}
+                      pageWidth={Math.min(WIDTH_RANGE.max, width)}
                       onHeight={setColumnHeight}
                       width={column.width}
                       zoom={shownZoom}

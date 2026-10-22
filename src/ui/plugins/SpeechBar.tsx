@@ -1,27 +1,94 @@
 // Read-aloud controls above the board: play, pause, sentence steps, speed, volume. In subtitle mode, a large subtitle.
 
 import { Gauge, LoaderCircle, LocateFixed, Lock, LockOpen, Pause, Play, SkipBack, SkipForward, Square, Volume2, X } from "lucide-react";
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { SPEECH_RATE_RANGE } from "../../io/settings";
 import { useSessionState } from "../app/sessionContext";
 import { useSpeech } from "./speech";
-import { formatListenTime, listenSeconds } from "./listenTime";
+import { formatListenTime, wordsSeconds, wordsToEnd } from "./listenTime";
 import { usePluginHost, usePlugins } from "./pluginsContext";
 import { useSession } from "../app/sessionContext";
 import { onShowSpoken, showSpoken, WEB_SOURCE, type SpeechState } from "./speech";
-import { cachedPageTexts, pageParagraphs } from "../web/pageTranslation";
+import { cachedPageTranslation } from "../web/pageTranslation";
 import { pageCounterpart, textCounterpart } from "./sentencePairs";
 import type { OverlayMap } from "./overlay";
 import type { Store } from "../../core/store";
 import type { Sentence } from "../../io/plugins";
 import "./plugins.css";
 
+/**
+ * "Making the audio: 2000 / 6000 · 1 h 50 min left". The time left comes from the speed so far (`start`: the first
+ * progress of this preparation). It shows after a few clips.
+ */
+function prepareLabel(prepare: { done: number; total: number }, start: { time: number; done: number } | null): string {
+  const made = start === null ? 0 : prepare.done - start.done;
+  const seconds = start === null ? 0 : (performance.now() - start.time) / 1000;
+  if (made < 3 || seconds <= 0) return `Making the audio: ${prepare.done} / ${prepare.total}`;
+  const left = formatListenTime(((prepare.total - prepare.done) * seconds) / made).replace("about ", "");
+  return `Making the audio: ${prepare.done} / ${prepare.total} · ${left} left`;
+}
+
+/** A short bubble over the lock button: a click on the text did nothing because the lock is on. */
+function LockReminder({ nudge }: { nudge: number }) {
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    if (nudge === 0) return;
+    setShown(true);
+    const timer = window.setTimeout(() => setShown(false), 2200);
+    return () => window.clearTimeout(timer);
+  }, [nudge]);
+  return shown ? <span className="speech-lock-reminder">Locked: unlock (the lock button) to jump to a sentence by clicking it</span> : null;
+}
+
+/** The speed as a number. A double-click makes it a field: type a speed, Enter (or leave the field) sets it, Esc cancels. */
+function RateText({ rate, onRate }: { rate: number; onRate(rate: number): void }) {
+  const [typing, setTyping] = useState<string | null>(null);
+  // Enter or Esc ends the field; the blur that follows (the field goes away) must not set the speed again.
+  const ended = useRef(false);
+  const done = (save: boolean) => {
+    if (ended.current) return;
+    ended.current = true;
+    const value = Number((typing ?? "").replace(",", ".").replace(/[×x]/g, ""));
+    if (save && Number.isFinite(value) && value > 0) onRate(Math.min(SPEECH_RATE_RANGE.max, Math.max(SPEECH_RATE_RANGE.min, Math.round(value * 100) / 100)));
+    setTyping(null);
+  };
+  if (typing === null) {
+    return (
+      <span className="speech-rate" onDoubleClick={(event) => (event.preventDefault(), (ended.current = false), setTyping(rate.toFixed(2)))}>
+        {rate.toFixed(2)}×
+      </span>
+    );
+  }
+  return (
+    <input
+      className="speech-rate-input"
+      autoFocus
+      value={typing}
+      onFocus={(event) => event.target.select()}
+      onChange={(event) => setTyping(event.target.value)}
+      onBlur={() => done(true)}
+      onKeyDown={(event) => {
+        event.stopPropagation();
+        if (event.key === "Enter") done(true);
+        else if (event.key === "Escape") done(false);
+      }}
+    />
+  );
+}
+
 export function SpeechBar() {
   const speech = useSpeech();
   const { settings } = useSessionState();
   const hostValue = usePluginHost();
   const state = speech?.state ?? null;
+  // The start of the current "All audio first" preparation, for the time left.
+  const prepareStart = useRef<{ time: number; done: number } | null>(null);
+  if (state?.prepare == null) prepareStart.current = null;
+  else prepareStart.current ??= { time: performance.now(), done: state.prepare.done };
   const sentence = state === null || state.preparing ? undefined : state.sentences[state.current];
+  // The words to the end, counted one time for each document (not at each redraw).
+  const sentences = state?.sentences;
+  const wordsLeft = useMemo(() => (sentences === undefined ? null : wordsToEnd(sentences)), [sentences]);
   const showSubtitle = hostValue?.host.showSubtitle;
   const floating = settings.speechMode === "subtitle" && settings.subtitleFloating && showSubtitle !== undefined;
   const session = useSession();
@@ -53,10 +120,11 @@ export function SpeechBar() {
           <LoaderCircle size={16} className="spin" />
         ) : state.prepare != null ? (
           <span className="speech-prepare muted">
-            <LoaderCircle size={14} className="spin" /> <span>{`Making the audio: ${state.prepare.done} / ${state.prepare.total}`}</span>
+            <LoaderCircle size={14} className="spin" /> <span>{prepareLabel(state.prepare, prepareStart.current)}</span>
           </span>
         ) : (
           <>
+            <LockReminder nudge={speech.lockNudge} />
             <button
               className={`icon-button small${settings.speechLock ? " active" : ""}`}
               data-tip={settings.speechLock ? "Locked: a click on the text does not move the reading (click to unlock)" : "Lock: a click on the text does not move the reading"}
@@ -80,7 +148,7 @@ export function SpeechBar() {
               {state.current + 1} / {state.sentences.length}
             </span>
             <span className="speech-left muted" data-tip="Time left, about">
-              {`${formatListenTime(listenSeconds(state.sentences.slice(state.current).map((sentence) => sentence.speech).join(" "), settings.speechRate)).replace("about ", "")} left`}
+              {`${formatListenTime(wordsSeconds(wordsLeft?.[state.current] ?? 0, settings.speechRate)).replace("about ", "")} left`}
             </span>
             <button className="icon-button small" data-tip="Previous sentence" onClick={() => speech.step(-1)}>
               <SkipBack size={14} />
@@ -91,8 +159,8 @@ export function SpeechBar() {
             <button className="icon-button small" data-tip="Next sentence" onClick={() => speech.step(1)}>
               <SkipForward size={14} />
             </button>
-            <label className="speech-slider" data-tip="Speed">
-              <span>{settings.speechRate.toFixed(2)}×</span>
+            <label className="speech-slider" data-tip="Speed (double-click the number to type it)">
+              <RateText rate={settings.speechRate} onRate={(rate) => speech.setRate(rate)} />
               <input
                 type="range"
                 min={SPEECH_RATE_RANGE.min}
@@ -183,9 +251,9 @@ export function LineMarkedText({ text, line, onLine }: { text: string; line: num
 /** The text that matches the spoken sentence in the other version: the translation (or the original, when the translation is read). */
 function counterpartOf(state: SpeechState, offset: number, overlay: OverlayMap, store: Store): string | null {
   if (state.sourceId.startsWith(WEB_SOURCE)) {
-    const texts = cachedPageTexts(state.sourceId.slice(WEB_SOURCE.length));
-    if (texts === null) return null;
-    const paragraphs = pageParagraphs(state.text);
+    const cached = cachedPageTranslation(state.sourceId.slice(WEB_SOURCE.length));
+    if (cached === null) return null;
+    const { paragraphs, texts } = cached;
     const pair = pageCounterpart(paragraphs, texts, offset);
     return pair === null ? null : (texts[pair.paragraph] ?? "").slice(pair.range.start, pair.range.end).trim() || null;
   }

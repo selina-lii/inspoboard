@@ -7,7 +7,7 @@
 //
 // Steps:
 // 1. Comments and notes of a page in the older form (`on` = the page, `pageAt`, `quote`, a card next to the page)
-//    become inside links (core/inside.ts, upgradeEntry). The card goes; the item, its text, and its replies stay.
+//    become inside links (legacy.ts, upgradeLegacy). The card goes; the item, its text, and its replies stay.
 // 2. Saved web pages and PDFs: one shared copy for each address (web/<hash>.html or .pdf) becomes one copy for each
 //    link object (web/<link object ID>.*). A link object that has its own copy keeps it.
 // 3. Notes of a page (web/<hash>.notes.json): they go to the oldest link object of the address (web/<ID>.notes.json),
@@ -21,7 +21,7 @@ import { makeOp, type Op } from "../commands";
 import { decodeVault, encodeVault, type VaultFiles } from "../format";
 import { GraphIndex } from "../graph";
 import { newId as randomId } from "../ids";
-import { insideEntryOf, isLegacyInside, upgradeEntry } from "../inside";
+import { isLegacyInside, upgradeLegacy } from "./legacy";
 import type { Store } from "../store";
 import type { Id, InsideLink, ItemRecord } from "../types";
 
@@ -78,7 +78,8 @@ async function webKey(url: string): Promise<string> {
 export async function planInsideMigration(vault: VaultFiles, web: WebFolder, localPdfKey: (path: string) => Promise<string | null>, now: string, newId: () => Id = randomId): Promise<MigrationPlan> {
   const report: string[] = [];
   const counts = { pageItems: 0, copies: 0, notesFiles: 0, webItems: 0, problems: 0 };
-  const decoded = decodeVault(vault);
+  // A format-1 vault: the app does not open it for changes, but the migration reads it (that is its job).
+  const decoded = decodeVault(vault, { oldFormat: true });
   const errors = decoded.problems.filter((problem) => problem.severity === "error");
   if (errors.length > 0 || decoded.meta === null) {
     report.push("The vault has errors. The migration does nothing. Fix the errors first (open the vault in the app to see them):");
@@ -93,9 +94,7 @@ export async function planInsideMigration(vault: VaultFiles, web: WebFolder, loc
   // 1. Page comments and notes in the older form.
   for (const item of [...store.all("items")]) {
     if (!isLegacyInside(store, graph, item)) continue;
-    const entry = insideEntryOf(store, graph, item.id);
-    if (entry === null) continue;
-    apply(upgradeEntry(context, entry).ops);
+    apply(upgradeLegacy(context, item));
     counts.pageItems += 1;
   }
   if (counts.pageItems > 0) report.push(`Page comments and notes: ${counts.pageItems} change to inside links (their cards next to the page go; the items, texts, and replies stay).`);

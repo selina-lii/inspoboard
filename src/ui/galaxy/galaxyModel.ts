@@ -6,18 +6,22 @@
 // - If `p3` is missing, the position comes from the 2D layout, centered on the board. The depth (z) is spread
 //   in a fixed pseudo-random way from the place ID, so that many cards fill a volume, not a plane.
 //   Cards in an outline or a calendar stay in the plane: their order is their meaning.
-// - Explode (`seed` > 0): a different spread for the cards with no `p3`. Also x and y move a little. View state only:
-//   cards that the user placed (with `p3`) do not move.
+//   The clusters (the cards of an inner board) and the satellites (scribbles, small items inside a page) spread in
+//   depth too: they fill a ball around their parent, not a ring or a plane.
+// - Explode (`seed` > 0): a different spread for the cards with no `p3`, at each level. Also x and y move. View state
+//   only: cards that the user placed (with `p3`) do not move.
 
+import { onlyInItems } from "../../core/linkEnds";
 import type { GraphIndex } from "../../core/graph";
 import type { Store } from "../../core/store";
 import { DEFAULT_END_CAP, DEFAULT_START_CAP, type Id, type LinkCap, type PlaceLink, type Point3, type ViewStyle } from "../../core/types";
 import { snippetOf } from "../board/boardModel";
 import { boardGroupType, cardsByDay, groupTitle, isCalendar } from "../../core/groups";
+import { isRadial, radialOffsets } from "../../core/radial";
 import { outlineRows } from "../../core/outline";
 import { t } from "../i18n/i18n";
 import { membersOf, shapeOutline } from "../../core/groupShapes";
-import { insideEntries, isLegacyInside } from "../../core/inside";
+import { insideEntries } from "../../core/inside";
 
 /** 2D board units for one 3D unit. */
 export const UNITS_PER_3D = 100;
@@ -26,9 +30,9 @@ export const CLUSTER_SCALE = 0.25;
 /** Distance of a satellite (a scribble in a note) from its note. */
 export const SATELLITE_ORBIT = 0.45;
 /** Depth of the spread of cards with no `p3`, relative to the larger side of their 2D area. */
-export const DEPTH_SPREAD = 0.6;
+export const DEPTH_SPREAD = 1;
 /** Explode: the largest move in x and y, relative to the depth of the spread. */
-export const EXPLODE_PLANE = 0.35;
+export const EXPLODE_PLANE = 0.5;
 
 export type GalaxyPointKind = "item" | "stamp" | "ghost" | "group";
 
@@ -62,7 +66,9 @@ export type GalaxyPoint = {
   /** For depth 2: the world position of the parent point. */
   parentPosition: Point3 | null;
   /** A group point (kind "group"), or a board that holds only one group: the group type. */
-  groupType: "outline" | "calendar" | null;
+  groupType: "outline" | "calendar" | "radial" | null;
+  /** A card of a radial: the key of its core point. A drag of the core carries the card (SPEC 7.17). */
+  followKey?: string;
   /** Outline group: its rows, for the tree list. */
   tree: TreeRow[];
   /** Calendar group: the number of days that have cards. The calendar is larger with more days. */
@@ -90,6 +96,9 @@ export type GalaxyLine = {
   toKey: Id;
   kind: "relation" | "cluster";
   group?: string;
+  /** The own color of the link, as on the board. */
+  color?: string;
+  dashed?: boolean;
   start: LinkCap;
   end: LinkCap;
 };
@@ -109,26 +118,28 @@ export function buildGalaxyModel(store: Store, graph: GraphIndex, boardId: Id, s
   /** Record ID -> the first point that shows it. Lines use it. */
   const pointOfRecord = new Map<Id, GalaxyPoint>();
 
-  // The cards of old page comments and notes are not on the board (they are inside their page: satellites below).
-  const top = graph.childrenOf(boardId).filter((place) => {
-    const item = store.get("items", place.to);
-    return item === undefined || !isLegacyInside(store, graph, item);
-  });
+  const top = graph.childrenOf(boardId);
   const topCenter = centroid(top);
   const inGroup = new Set(graph.outlinesOn(boardId).flatMap((group) => graph.membersOf(group.id).map((place) => place.id)));
   const depth = DEPTH_SPREAD * largerSide(top);
+  // Radials: each card at its offset from the core, with its depth (the ball of SPEC 7.17).
+  const inRadial = new Map<Id, { local: Point3; followKey: string }>();
+  for (const group of graph.outlinesOn(boardId)) {
+    if (!isRadial(group)) continue;
+    const core = localPosition({ x: group.x, y: group.y, w: 0, h: 0 } as PlaceLink, topCenter);
+    for (const [placeId, [dx, dy, dz]] of radialOffsets(store, graph, group)) {
+      inRadial.set(placeId, { local: [core[0] + dx / UNITS_PER_3D, core[1] - dy / UNITS_PER_3D, core[2] + dz / UNITS_PER_3D], followKey: `group:${group.id}` });
+    }
+  }
   for (const place of top) {
-    const local = localPosition(place, topCenter);
+    const radial = inRadial.get(place.id);
+    const local = radial?.local ?? localPosition(place, topCenter);
     // A group card (a loose area) stays in the plane of the board, like the cards of an outline.
     if (place.p3 === undefined && !inGroup.has(place.id) && place.view !== "group") {
-      const key = seed === 0 ? place.id : `${seed}:${place.id}`;
-      local[2] = (unitHash(key) - 0.5) * depth;
-      if (seed !== 0) {
-        local[0] += (unitHash(`${key}:x`) - 0.5) * depth * EXPLODE_PLANE;
-        local[1] += (unitHash(`${key}:y`) - 0.5) * depth * EXPLODE_PLANE;
-      }
+      spread(local, seed === 0 ? place.id : `${seed}:${place.id}`, depth, seed);
     }
     const point = makePoint(store, graph, place, 1, local, null);
+    if (radial !== undefined) point.followKey = radial.followKey;
     points.push(point);
     if (!pointOfRecord.has(place.to)) pointOfRecord.set(place.to, point);
   }
@@ -150,13 +161,14 @@ export function buildGalaxyModel(store: Store, graph: GraphIndex, boardId: Id, s
     const center = centroid(children);
     // A card that is not a board holds only scribbles: they orbit it as satellites.
     const satellites = !parent.isBoard;
+    const clusterDepth = DEPTH_SPREAD * largerSide(children);
     children.forEach((place, index) => {
       if (place.to === boardId) return;
       const local = localPosition(place, center);
-      const angle = (index / Math.max(1, children.length)) * Math.PI * 2;
+      if (place.p3 === undefined) spread(local, seed === 0 ? place.id : `${seed}:${place.id}`, clusterDepth, seed);
       const world: Point3 =
         satellites && place.p3 === undefined
-          ? [parent.position[0] + Math.cos(angle) * SATELLITE_ORBIT, parent.position[1] + Math.sin(angle) * SATELLITE_ORBIT, parent.position[2] + 0.15]
+          ? orbit(parent.position, index, children.length, seed)
           : [parent.position[0] + local[0] * CLUSTER_SCALE, parent.position[1] + local[1] * CLUSTER_SCALE, parent.position[2] + local[2] * CLUSTER_SCALE];
       const point = makePoint(store, graph, place, 2, world, parent.position);
       point.satellite = satellites;
@@ -172,8 +184,7 @@ export function buildGalaxyModel(store: Store, graph: GraphIndex, boardId: Id, s
     if (host.kind !== "item" || host.isBoard || host.isReference) continue;
     const entries = insideEntries(store, graph, host.recordId);
     entries.forEach((entry, index) => {
-      const angle = (index / Math.max(1, entries.length)) * Math.PI * 2 + Math.PI / 2;
-      const world: Point3 = [host.position[0] + Math.cos(angle) * SATELLITE_ORBIT, host.position[1] + Math.sin(angle) * SATELLITE_ORBIT, host.position[2] + 0.15];
+      const world = orbit(host.position, index + 0.5, entries.length, seed);
       const card: PlaceLink = { id: entry.link?.id ?? `old:${entry.item.id}`, kind: "place", from: host.recordId, to: entry.item.id, x: 0, y: 0, w: entry.w ?? 200, h: entry.h ?? 100, view: entry.view };
       const point = makePoint(store, graph, card, 2, world, host.position);
       point.key = `inside:${card.id}`;
@@ -193,8 +204,10 @@ export function buildGalaxyModel(store: Store, graph: GraphIndex, boardId: Id, s
       members.length === 0
         ? localPosition({ x: group.x, y: group.y, w: 0, h: 0 } as PlaceLink, topCenter)
         : [0, 1, 2].map((axis) => members.reduce((sum, point) => sum + point.position[axis]!, 0) / members.length) as Point3;
-    const position: Point3 = [middle[0], middle[1] + (members.length === 0 ? 0 : 0.9), middle[2] + 0.4];
     const calendar = isCalendar(group);
+    const radial = isRadial(group);
+    // A radial: the point is its core (the cards are around it). Other groups: above the middle of their cards.
+    const position: Point3 = radial ? localPosition({ x: group.x, y: group.y, w: 0, h: 0 } as PlaceLink, topCenter) : [middle[0], middle[1] + (members.length === 0 ? 0 : 0.9), middle[2] + 0.4];
     const point: GalaxyPoint = {
       key: `group:${group.id}`,
       placeId: "",
@@ -211,8 +224,8 @@ export function buildGalaxyModel(store: Store, graph: GraphIndex, boardId: Id, s
       isBoard: false,
       position,
       parentPosition: null,
-      groupType: calendar ? "calendar" : "outline",
-      tree: calendar ? [] : outlineRows(store, graph, group.id).map((row) => ({ depth: row.depth, label: `${row.marker !== "" ? `${row.marker} ` : ""}${titleOfRecord(store, row.recordId)}` })),
+      groupType: calendar ? "calendar" : radial ? "radial" : "outline",
+      tree: calendar || radial ? [] : outlineRows(store, graph, group.id).map((row) => ({ depth: row.depth, label: `${row.marker !== "" ? `${row.marker} ` : ""}${titleOfRecord(store, row.recordId)}` })),
       days: calendar ? cardsByDay(store, graph, group.id).size : 0,
       area: null,
     };
@@ -225,7 +238,8 @@ export function buildGalaxyModel(store: Store, graph: GraphIndex, boardId: Id, s
   for (const [recordId, point] of pointOfRecord) {
     for (const link of graph.relationsFrom(recordId)) {
       const target = pointOfRecord.get(link.to);
-      if (target === undefined || seen.has(link.id)) continue;
+      // A link made from text shows in its items, not here (SPEC 7.11).
+      if (target === undefined || seen.has(link.id) || onlyInItems(store, link)) continue;
       seen.add(link.id);
       const line: GalaxyLine = {
         key: link.id,
@@ -238,6 +252,8 @@ export function buildGalaxyModel(store: Store, graph: GraphIndex, boardId: Id, s
         end: link.end ?? DEFAULT_END_CAP,
       };
       if (link.group !== undefined) line.group = link.group;
+      if (link.color !== undefined) line.color = link.color;
+      if (link.dashed === true) line.dashed = true;
       lines.push(line);
     }
   }
@@ -311,6 +327,27 @@ function localPosition(place: PlaceLink, center: { x: number; y: number }): Poin
   const x = place.x + place.w / 2;
   const y = place.y + place.h / 2;
   return [(x - center.x) / UNITS_PER_3D, -(y - center.y) / UNITS_PER_3D, 0];
+}
+
+/** The spread of a card with no `p3`: a depth from its key; with an explode seed, also a move in x and y. */
+function spread(local: Point3, key: string, depth: number, seed: number): void {
+  local[2] = (unitHash(key) - 0.5) * depth;
+  if (seed !== 0) {
+    local[0] += (unitHash(`${key}:x`) - 0.5) * depth * EXPLODE_PLANE;
+    local[1] += (unitHash(`${key}:y`) - 0.5) * depth * EXPLODE_PLANE;
+  }
+}
+
+/**
+ * The place of satellite `index` of `count` around a parent: on a sphere (golden-angle spiral), so that many
+ * satellites fill the space around it, not a ring. An explode seed turns the sphere.
+ */
+function orbit(center: Point3, index: number, count: number, seed: number): Point3 {
+  const n = Math.max(1, count);
+  const y = n === 1 ? 0.35 : 1 - (2 * (index % n) + 1) / n;
+  const ring = Math.sqrt(Math.max(0, 1 - y * y));
+  const angle = index * Math.PI * (3 - Math.sqrt(5)) + (seed === 0 ? 0 : unitHash(`orbit:${seed}`) * Math.PI * 2);
+  return [center[0] + Math.cos(angle) * ring * SATELLITE_ORBIT, center[1] + y * SATELLITE_ORBIT, center[2] + Math.sin(angle) * ring * SATELLITE_ORBIT];
 }
 
 /** The larger side of the 2D area of the places, in 3D units. */

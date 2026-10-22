@@ -41,6 +41,18 @@ describe("board model", () => {
     expect(model.edges.find((edge) => edge.id === RELATION)?.target).toBe(ghost.id);
   });
 
+  it("shows all the text of a note, and the start of a page", () => {
+    const context = loadTestContext();
+    const body = "word ".repeat(100).trim();
+    const note = createItemOnBoard(context, { boardId: ROOT, view: "note", x: 0, y: 0, body });
+    const page = createItemOnBoard(context, { boardId: ROOT, view: "page", x: 0, y: 0, body });
+    context.history.run(note.command);
+    context.history.run(page.command);
+    const model = buildBoardModel(context.store, context.graph, ROOT);
+    expect(model.nodes.find((node) => node.recordId === note.itemId)?.preview).toBe(body);
+    expect(model.nodes.find((node) => node.recordId === page.itemId)?.preview.endsWith("…")).toBe(true);
+  });
+
   it("makes a short plain preview", () => {
     expect(previewOf("# Title\nSee [x](item:aaaaaaaaaaaa) and ![cat](assets/c.png)")).toBe("Title\nSee x and [cat]");
   });
@@ -105,5 +117,28 @@ describe("a page holds its small items", () => {
     expect(context.store.get("links", comment.placeId)).toBeDefined();
     context.history.run(setResolved(context, comment.itemId, true));
     expect(buildBoardModel(context.store, context.graph, ROOT).nodes.find((node) => node.recordId === TOOL_RESEARCH)!.openComments).toBe(0);
+  });
+});
+
+describe("stubs", () => {
+  it("puts a stub next to the card, and where the user dragged it (saved on the place link)", async () => {
+    const { DATA_INTEGRITY, IDEAS, loadTestContext, ROOT, TOOL_RESEARCH } = await import("./helpers");
+    const { buildBoardModel } = await import("../src/ui/board/boardModel");
+    const { createRelation, setStubPlace } = await import("../src/core/actions");
+    const { decodeVault, encodeVault } = await import("../src/core/format");
+    const context = loadTestContext();
+    // On Ideas, Data integrity (p3c3) links to Tool research, which is not on Ideas: a stub.
+    context.history.run(createRelation(context, { from: DATA_INTEGRITY, to: TOOL_RESEARCH }).command);
+    const stubOf = () => buildBoardModel(context.store, context.graph, IDEAS).nodes.find((node) => node.kind === "stub" && node.recordId === TOOL_RESEARCH)!;
+    const first = stubOf();
+    expect(first.stubAnchor?.placeId).toBe("p3c3c3c3c3c3");
+    expect(first.x - first.stubAnchor!.x).toBe(16);
+    context.history.run(setStubPlace(context, "p3c3c3c3c3c3", TOOL_RESEARCH, [-30.4, 120]));
+    const moved = stubOf();
+    expect(moved.x - moved.stubAnchor!.x).toBeCloseTo(-30.4);
+    expect(moved.y - moved.stubAnchor!.y).toBe(120);
+    expect(decodeVault(encodeVault(context.store, { format: 2, root: ROOT })).store.get("links", "p3c3c3c3c3c3")).toMatchObject({ stubs: { [TOOL_RESEARCH]: [-30.4, 120] } });
+    context.history.undo();
+    expect(stubOf().x - stubOf().stubAnchor!.x).toBe(16);
   });
 });

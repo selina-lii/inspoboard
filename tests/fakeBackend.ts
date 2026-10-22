@@ -26,6 +26,14 @@ export class FakeBackend implements Backend {
     this.calls.push("close");
   }
 
+  async openVaultWindow(path: string | null): Promise<void> {
+    this.calls.push(`window ${path ?? ""}`);
+  }
+
+  async focusVaultWindow(): Promise<boolean> {
+    return false;
+  }
+
   async writeFiles(_root: string, writes: FileWrite[]): Promise<void> {
     this.calls.push(`write ${writes.map((write) => write.path).join(",")}`);
     for (const write of writes) {
@@ -113,6 +121,10 @@ export class FakeBackend implements Backend {
     return path;
   }
 
+  async pasteImages(): Promise<string[]> {
+    return [];
+  }
+
   async saveImageBytes(_root: string, name: string, bytes: Uint8Array): Promise<string> {
     const path = `images/${name}`;
     this.images.set(path, bytes.slice().buffer);
@@ -141,6 +153,10 @@ export class FakeBackend implements Backend {
   /** Binary web files (PDFs): path -> bytes. */
   webBytes = new Map<string, Uint8Array>();
 
+  pdfPageUrl(): string | null {
+    return null;
+  }
+
   async readWebBytes(_root: string, path: string): Promise<ArrayBuffer> {
     const bytes = this.webBytes.get(path);
     if (bytes === undefined) throw new Error(`No file ${path}.`);
@@ -149,6 +165,31 @@ export class FakeBackend implements Backend {
 
   async writeWebBytes(_root: string, path: string, bytes: Uint8Array): Promise<void> {
     this.webBytes.set(path, bytes);
+  }
+
+  /** The files of an item, as the backend has them (item_files in commands.rs). */
+  private itemFiles(key: string): string[] {
+    return [`web/${key}.html`, `web/${key}.pdf`, `web/${key}.notes.json`, `marks/${key}.json`];
+  }
+
+  async itemFilesSize(_root: string, keys: readonly string[]): Promise<number> {
+    let total = 0;
+    for (const key of keys) for (const path of this.itemFiles(key)) total += this.web.get(path)?.length ?? this.webBytes.get(path)?.length ?? 0;
+    return total;
+  }
+
+  async copyItemFiles(_root: string, from: string, to: string): Promise<number> {
+    let copied = 0;
+    this.itemFiles(from).forEach((path, index) => {
+      const target = this.itemFiles(to)[index]!;
+      const text = this.web.get(path);
+      const bytes = this.webBytes.get(path);
+      if (text !== undefined) this.web.set(target, text);
+      else if (bytes !== undefined) this.webBytes.set(target, bytes.slice());
+      else return;
+      copied += 1;
+    });
+    return copied;
   }
 
   async choosePdf(): Promise<string | null> {
@@ -177,10 +218,23 @@ export class FakeBackend implements Backend {
     return () => undefined;
   }
 
+  async logEvents(): Promise<void> {}
+
+  async logPath(): Promise<string | null> {
+    return null;
+  }
+
+  async onFileDrop(): Promise<() => void> {
+    return () => undefined;
+  }
+
   /** Simulates a change from a different program. */
-  outsideWrite(path: string, content: string | null): void {
-    if (content === null) this.files.delete(path);
-    else this.files.set(path, content);
-    for (const listener of this.listeners) listener({ path, content, unreadable: false });
+  /** `root`: the vault of the change (a different vault: its files here do not change). */
+  outsideWrite(path: string, content: string | null, root?: string): void {
+    if (root === undefined) {
+      if (content === null) this.files.delete(path);
+      else this.files.set(path, content);
+    }
+    for (const listener of this.listeners) listener({ root, path, content, unreadable: false });
   }
 }

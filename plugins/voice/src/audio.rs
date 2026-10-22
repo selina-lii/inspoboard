@@ -1,4 +1,4 @@
-//! Audio helpers: pitch change by resampling, and WAV encoding.
+//! Audio helpers: pitch change by resampling, silence at the ends, and WAV encoding.
 
 /// Resamples by `factor` with linear interpolation. Played at the old rate, the pitch goes up by `factor`
 /// and the duration goes down by `factor`. The caller makes the speech slower by the same factor first.
@@ -16,6 +16,26 @@ pub fn resample(samples: &[f32], factor: f32) -> Vec<f32> {
             samples[left] * (1.0 - weight) + samples[right] * weight
         })
         .collect()
+}
+
+/// Silence that stays at the start and at the end of a clip (ms). The voice makes about 100 ms at each end; with
+/// the gap between two clips, sentences did not sound continuous. 30 + 90 ms: a short breath between sentences.
+pub const KEEP_START_MS: f32 = 30.0;
+pub const KEEP_END_MS: f32 = 90.0;
+/// Silence that stays between two parts of one clip (a formula in a sentence): they sound as one sentence.
+pub const KEEP_JOIN_MS: f32 = 40.0;
+/// Below this level a sample is silence.
+const QUIET: f32 = 0.01;
+
+/// The clip without the silence at its ends past `keep_start_ms` and `keep_end_ms`. All silence: unchanged.
+pub fn trim_silence(samples: &[f32], sample_rate: u32, keep_start_ms: f32, keep_end_ms: f32) -> Vec<f32> {
+    let (Some(first), Some(last)) = (samples.iter().position(|sample| sample.abs() > QUIET), samples.iter().rposition(|sample| sample.abs() > QUIET)) else {
+        return samples.to_vec();
+    };
+    let keep = |ms: f32| (ms / 1000.0 * sample_rate as f32) as usize;
+    let start = first.saturating_sub(keep(keep_start_ms));
+    let end = (last + 1 + keep(keep_end_ms)).min(samples.len());
+    samples[start..end].to_vec()
 }
 
 /// 16-bit PCM WAV, one channel.
@@ -44,6 +64,17 @@ pub fn wav(samples: &[f32], sample_rate: u32, volume: f32) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn trims_silence_at_the_ends() {
+        // 1000 samples per second: 100 ms of silence, 50 ms of sound, 200 ms of silence.
+        let mut samples = vec![0.0; 100];
+        samples.extend(vec![0.5; 50]);
+        samples.extend(vec![0.0; 200]);
+        let trimmed = trim_silence(&samples, 1000, 30.0, 90.0);
+        assert_eq!(trimmed.len(), 30 + 50 + 90);
+        assert_eq!(trim_silence(&[0.0; 10], 1000, 30.0, 90.0).len(), 10);
+    }
 
     #[test]
     fn resample_changes_length() {

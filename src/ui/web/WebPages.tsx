@@ -7,13 +7,12 @@
 // - Highlights and scribbles go to a separate file (web/<link object ID>.notes.json). The page file does not change.
 //   Small items (comments, notes, …) on the page are vault items inside the link object (core/inside.ts).
 
-import { Globe, LoaderCircle, X } from "lucide-react";
-import { MovablePanel } from "../app/movable";
+import { LoaderCircle, X } from "lucide-react";
 import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from "react";
 import { useSession } from "../app/sessionContext";
 import { usePlugins } from "../plugins/pluginsContext";
 import { fileNameOfPath, isLocalPath, isPdfPath, isWebUrl, normalizeUrl, pagePath, pdfPath } from "./savedPages";
-import { legacyKey, notesSourceOf, oldestLinkObject } from "./webHomes";
+import { oldestLinkObject } from "./webHomes";
 import type { Id } from "../../core/types";
 import type { ReadMode } from "../plugins/speech";
 import { WebReader } from "./WebReader";
@@ -28,12 +27,10 @@ import "./web.css";
  * An open page or PDF:
  * - `key`: the link object (its ID): the key of its notes (web/<key>.notes.json) and of its small items.
  * - `itemId`: the link object (the home of the small items on the page).
- * - `fileKey`: where the page file is (the link object, or the old shared copy of its address).
- * - `notesFrom`: the notes file to read (the link object, or the old shared notes). Writes go to `key`.
  * - `autoRead`: start to read aloud from the top when the page is ready (for example "Read aloud" on a link object).
  * - `find`: find this text in the page when it is ready (a hit of the board search).
  */
-type PageBase = { key: string; itemId: Id; fileKey: string; notesFrom: string; url: string; autoRead?: boolean; find?: string };
+type PageBase = { key: string; itemId: Id; url: string; autoRead?: boolean; find?: string };
 export type HtmlPage = PageBase & { kind: "html"; html: string };
 export type PdfPage = PageBase & { kind: "pdf"; title: string; data: ArrayBuffer };
 
@@ -77,9 +74,9 @@ type WebPagesValue = {
   /** The place in the main tool bar for the reader tools (see ReaderToolSlot). */
   toolSlot: HTMLElement | null;
   setToolSlot(element: HTMLElement | null): void;
-  /** The place at the end of the main tool bar ("Save again from the web", see ReaderEndSlot). */
-  endSlot: HTMLElement | null;
-  setEndSlot(element: HTMLElement | null): void;
+  /** "Save again from the web" of the open page (null: none). It is in the "More" menu (⋯) of the top bar. */
+  saveAgain: (() => void) | null;
+  setSaveAgain(run: (() => void) | null): void;
 };
 
 const WebPagesContext = createContext<WebPagesValue | null>(null);
@@ -91,10 +88,11 @@ export function useWebPages(): WebPagesValue | null {
 type Status = { kind: "saving"; url: string } | { kind: "error"; message: string } | null;
 
 /**
- * `makeHome`: makes a link object for an address on the current board (one undo step) and returns its ID, or null
- * (read-only vault). The workspace gives it.
+ * `makeHome`: the link object of an address for the current board (one undo step), or null (read-only vault). The
+ * workspace gives it. `existing`: the item of the address (made before, maybe on an other board): the current board
+ * gets a shadow of it (a reference card: a click opens that same item), not a new item. Null: a new link object.
  */
-export function WebPagesProvider({ children, makeHome }: { children: ReactNode; makeHome(url: string, name: string): Id | null }) {
+export function WebPagesProvider({ children, makeHome }: { children: ReactNode; makeHome(url: string, name: string, existing: Id | null): Id | null }) {
   const session = useSession();
   const plugins = usePlugins();
   const [page, setPage] = useState<WebPage | null>(null);
@@ -108,14 +106,15 @@ export function WebPagesProvider({ children, makeHome }: { children: ReactNode; 
 
   const reader = useRef<ReaderApi | null>(null);
   const [toolSlot, setToolSlot] = useState<HTMLElement | null>(null);
-  const [endSlot, setEndSlot] = useState<HTMLElement | null>(null);
+  const [saveAgain, setSaveAgainState] = useState<(() => void) | null>(null);
+  const setSaveAgain = useCallback((run: (() => void) | null) => setSaveAgainState(() => run), []);
   const makeHomeRef = useRef(makeHome);
   makeHomeRef.current = makeHome;
-  /** The link object of a page: the given one, else the first one of the address, else a new one. */
+  /** The link object of a page: the given one, else the first one of the address (with a shadow here), else a new one. */
   const homeOf = useCallback(
     (url: string, itemId: Id | undefined, name: string): Id => {
       if (itemId !== undefined && session.store.has("items", itemId)) return itemId;
-      const home = oldestLinkObject(session.store, url) ?? makeHomeRef.current(url, name);
+      const home = makeHomeRef.current(url, name, oldestLinkObject(session.store, url));
       if (home === null) throw new Error("The vault is read-only: the page cannot get a link object.");
       return home;
     },
@@ -132,22 +131,13 @@ export function WebPagesProvider({ children, makeHome }: { children: ReactNode; 
             return;
           }
           const home = homeOf(url.trim(), itemId, fileNameOfPath(url));
-          // Its own copy, else the old copy (by the hash of the file; only that has the old notes), else a new copy.
-          let fileKey = home;
+          // Its own copy, else a new copy of the file.
           let data = await session.readWebBytes(pdfPath(home)).catch(() => null);
-          let shared: string | null = null;
-          if (data === null) {
-            shared = await session.importPdfFrom(url).catch(() => null);
-            data = shared === null ? null : await session.readWebBytes(pdfPath(shared)).catch(() => null);
-            if (data !== null && shared !== null) fileKey = shared;
-          }
           if (data === null) {
             await session.importPdfFrom(url, home);
             data = await session.readWebBytes(pdfPath(home));
-            fileKey = home;
           }
-          const notesFrom = await notesSourceOf(session, home, url.trim(), shared);
-          setPage({ kind: "pdf", key: home, itemId: home, fileKey, notesFrom, url: url.trim(), title: fileNameOfPath(url), data, autoRead: read, find });
+          setPage({ kind: "pdf", key: home, itemId: home, url: url.trim(), title: fileNameOfPath(url), data, autoRead: read, find });
         } catch (problem) {
           setStatus({ kind: "error", message: String(problem).replace(/^Error: /, "") });
         }
@@ -159,9 +149,8 @@ export function WebPagesProvider({ children, makeHome }: { children: ReactNode; 
       }
       setStatus(null);
       try {
-        const shared = await legacyKey(url);
         const known = itemId !== undefined && session.store.has("items", itemId) ? itemId : oldestLinkObject(session.store, url);
-        const saved = again || known === null ? null : await loadSaved(session, known, url, shared);
+        const saved = again || known === null ? null : await loadSaved(session, known, url);
         if (saved !== null) {
           setPage({ ...saved, autoRead: read, find });
           setStatus(null);
@@ -173,17 +162,16 @@ export function WebPagesProvider({ children, makeHome }: { children: ReactNode; 
         const title = typeof result?.title === "string" ? result.title : "";
         // The copy belongs to a link object: the given one, the first one of the address, or a new one.
         const home = homeOf(url, known ?? undefined, title);
-        const notesFrom = await notesSourceOf(session, home, url, shared);
         if (result?.kind === "pdf" && typeof result.data === "string") {
           const bytes = base64Bytes(result.data);
           await session.writeWebBytes(pdfPath(home), bytes);
           forgetPageText(session, home);
-          setPage({ kind: "pdf", key: home, itemId: home, fileKey: home, notesFrom, url: normalizeUrl(url), title: title !== "" ? title : url, data: bytes.buffer, autoRead: read });
+          setPage({ kind: "pdf", key: home, itemId: home, url: normalizeUrl(url), title: title !== "" ? title : url, data: bytes.buffer, autoRead: read });
         } else {
           if (typeof result?.html !== "string" || result.html === "") throw new Error("The plugin gave no page.");
           await session.writeWebFile(pagePath(home), result.html);
           forgetPageText(session, home);
-          setPage({ kind: "html", key: home, itemId: home, fileKey: home, notesFrom, url: normalizeUrl(url), html: result.html, autoRead: read });
+          setPage({ kind: "html", key: home, itemId: home, url: normalizeUrl(url), html: result.html, autoRead: read });
         }
         setStatus(null);
       } catch (problem) {
@@ -228,8 +216,8 @@ export function WebPagesProvider({ children, makeHome }: { children: ReactNode; 
   }, [session, openWebPage]);
 
   const value = useMemo<WebPagesValue>(
-    () => ({ page, openWebPage, jumpTo, openInBrowser, openPdfFile, close: () => setPage(null), canSave: saver !== null, reader, toolSlot, setToolSlot, endSlot, setEndSlot }),
-    [page, openWebPage, jumpTo, openInBrowser, openPdfFile, saver, toolSlot, endSlot],
+    () => ({ page, openWebPage, jumpTo, openInBrowser, openPdfFile, close: () => setPage(null), canSave: saver !== null, reader, toolSlot, setToolSlot, saveAgain, setSaveAgain }),
+    [page, openWebPage, jumpTo, openInBrowser, openPdfFile, saver, toolSlot, saveAgain, setSaveAgain],
   );
 
   return (
@@ -268,8 +256,9 @@ function WebStatus({ status, onClose }: { status: Status; onClose(): void }) {
 const SAVE_AGAIN_WARNING =
   "This page has your notes. Saving it again replaces the saved copy (the old copy is not kept). Highlights find their text again; scribbles, comments, and notes stay at their places and can be off their text if the page changed.\n\nSave the page again?";
 
-export function WebOpener({ openRef, jumpRef, browserRef }: { openRef: MutableRefObject<(url: string, read?: boolean, find?: string, itemId?: Id) => void>; jumpRef: MutableRefObject<(url: string, itemId?: Id) => void>; browserRef: MutableRefObject<(url: string) => void> }) {
+export function WebOpener({ openRef, jumpRef, browserRef, openPageRef }: { openRef: MutableRefObject<(url: string, read?: boolean, find?: string, itemId?: Id) => void>; jumpRef: MutableRefObject<(url: string, itemId?: Id) => void>; browserRef: MutableRefObject<(url: string) => void>; openPageRef: MutableRefObject<boolean> }) {
   const web = useWebPages();
+  openPageRef.current = web?.page != null;
   openRef.current = (url, read, find, itemId) => void web?.openWebPage(url, false, read === true, find, itemId);
   jumpRef.current = (url, itemId) => void web?.jumpTo(url, itemId);
   browserRef.current = (url) => void web?.openInBrowser(url);
@@ -282,11 +271,6 @@ export function ReaderToolSlot() {
   return <span className="reader-tool-slot" ref={web?.setToolSlot} />;
 }
 
-/** The place at the end of the main tool bar for "Save again from the web". */
-export function ReaderEndSlot() {
-  const web = useWebPages();
-  return <span className="reader-tool-slot" ref={web?.setEndSlot} />;
-}
 
 /** Shows its children only while no page is open (the board tools: the reader has its own tools then). */
 export function WhenNoPage({ children }: { children: ReactNode }) {
@@ -320,10 +304,9 @@ export function WebReaderLayer() {
   return <WebReader key={page.key} page={page} onClose={web.close} onSaveAgain={again ?? (() => undefined)} />;
 }
 
-/** The copy (HTML or PDF) of a link object: its own, else the old shared copy of its address. Null if it has none. */
-async function loadSaved(session: ReturnType<typeof useSession>, home: Id, url: string, shared: string | null): Promise<WebPage | null> {
-  const notesFrom = await notesSourceOf(session, home, url, shared);
-  const base = { key: home, itemId: home, notesFrom, url: normalizeUrl(url) };
+/** The copy (HTML or PDF) of a link object. Null if it has none. */
+async function loadSaved(session: ReturnType<typeof useSession>, home: Id, url: string): Promise<WebPage | null> {
+  const base = { key: home, itemId: home, url: normalizeUrl(url) };
   const name = () => {
     try {
       return decodeURIComponent(new URL(url).pathname.split("/").filter(Boolean).at(-1) ?? url);
@@ -331,12 +314,10 @@ async function loadSaved(session: ReturnType<typeof useSession>, home: Id, url: 
       return url;
     }
   };
-  for (const fileKey of shared === null ? [home] : [home, shared]) {
-    const html = await session.readWebFile(pagePath(fileKey));
-    if (html !== null) return { ...base, kind: "html", fileKey, html };
-    const data = await session.readWebBytes(pdfPath(fileKey)).catch(() => null);
-    if (data !== null) return { ...base, kind: "pdf", fileKey, title: name(), data };
-  }
+  const html = await session.readWebFile(pagePath(home));
+  if (html !== null) return { ...base, kind: "html", html };
+  const data = await session.readWebBytes(pdfPath(home)).catch(() => null);
+  if (data !== null) return { ...base, kind: "pdf", title: name(), data };
   return null;
 }
 
@@ -347,65 +328,3 @@ function base64Bytes(text: string): Uint8Array<ArrayBuffer> {
   return bytes;
 }
 
-/** A tool bar button: type an address, then save and read the page. */
-export function WebButton() {
-  const web = useWebPages();
-  const [open, setOpen] = useState(false);
-  const [address, setAddress] = useState("");
-  const frame = useRef<HTMLSpanElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (event: PointerEvent) => {
-      if (frame.current !== null && !frame.current.contains(event.target as Node)) setOpen(false);
-    };
-    window.addEventListener("pointerdown", onPointerDown);
-    return () => window.removeEventListener("pointerdown", onPointerDown);
-  }, [open]);
-  if (web === null) return null;
-  const submit = () => {
-    const url = /^[a-z]+:\/\//i.test(address.trim()) ? address.trim() : `https://${address.trim()}`;
-    setOpen(false);
-    void web.openWebPage(url);
-  };
-  return (
-    <span className="plugin-menu" ref={frame}>
-      <button className={`icon-button${open ? " active" : ""}`} data-tip="Read a web page or a PDF" onClick={() => setOpen((current) => !current)}>
-        <Globe size={16} />
-      </button>
-      {open && (
-        <MovablePanel className="plugin-popover" titleClassName="plugin-popover-title" label="Read a web page" title="Read a web page or a PDF">
-          <input
-            disabled={!web.canSave}
-            autoFocus
-            placeholder="https://…"
-            value={address}
-            spellCheck={false}
-            onChange={(event) => setAddress(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && address.trim() !== "") submit();
-              if (event.key === "Escape") setOpen(false);
-            }}
-          />
-          <div className="plugin-buttons">
-            <button className="primary" disabled={address.trim() === "" || !web.canSave} onClick={submit}>
-              Save and read
-            </button>
-            <button
-              onClick={() => {
-                setOpen(false);
-                void web.openPdfFile();
-              }}
-            >
-              Open a PDF file…
-            </button>
-          </div>
-          <div className="plugin-note muted">
-            {web.canSave
-              ? "The page (or PDF) is saved in the vault as one file. Later it opens without network. ⌘-click a web link in a note to open it too."
-              : "To save web pages, install the Web pages plugin (Settings → Plugins). PDF files from this computer open without it."}
-          </div>
-        </MovablePanel>
-      )}
-    </span>
-  );
-}

@@ -24,6 +24,11 @@ export type TextIndex = {
   positions: Map<Text, number>;
   /** The formulas of the page (web pages only). */
   formulas?: Formula[];
+  /** The visible element of each formula (same order): its box places the formula note. The text of a formula is
+   *  its MathML, which KaTeX and MathJax keep hidden (a box of 1 px), so its text range has no useful place. */
+  formulaElements?: Element[];
+  /** A PDF: the place in `text` of each line of the PDF (the translation joins them into paragraphs by their places). */
+  lines?: { start: number; end: number }[];
 };
 
 export function indexText(doc: Document): TextIndex {
@@ -54,6 +59,7 @@ export function indexText(doc: Document): TextIndex {
   const starts: number[] = [];
   const positions = new Map<Text, number>();
   const formulas: Formula[] = [];
+  const formulaElements: Element[] = [];
   const doneMath = new Set<Element>();
   let text = "";
   let lastBlock: Element | null = null;
@@ -81,6 +87,7 @@ export function indexText(doc: Document): TextIndex {
       text += node.data.replace(/[\t\n\r\f\v]/g, " ");
       const display = math.getAttribute("display") === "block";
       formulas.push(tex !== undefined && tex !== "" ? { start, end: text.length, tex, display } : { start, end: text.length, mathml: math.outerHTML, display });
+      formulaElements.push(wrapper);
       text += " ";
       continue;
     }
@@ -95,7 +102,7 @@ export function indexText(doc: Document): TextIndex {
     starts.push(text.length);
     text += node.data.replace(/[\t\n\r\f\v]/g, " ");
   }
-  return { text, nodes, starts, positions, formulas };
+  return { text, nodes, starts, positions, formulas, formulaElements };
 }
 
 /** The text index of a DOM position (for example the caret at a click). Null if it is not in the text. */
@@ -154,58 +161,61 @@ export function rangeOf(index: TextIndex, start: number, end: number): Range | n
 }
 
 /**
- * The text of a PDF text layer (one span for each text run, in reading order).
- * - Runs on one line join (with a space if there is a gap). Lines join into paragraphs (pdfSeparators).
- * - Each paragraph is one line of the text ("\n" between paragraphs), as in a web page: a translation and
- *   read-aloud work paragraph by paragraph.
+ * Which runs are numbers in a side margin: line numbers of a manuscript, or a page number at the side. Content must
+ * never go: a run is left out only if all of these are true.
+ * - It is only a number (1 to 4 digits), all left of the text column of its page or all right of it. The text column:
+ *   from the left end to the right end of the page's long runs (15 characters or more).
+ * - On its side of the page, it is the only such number and it is above or below all the long runs (a page number at
+ *   a corner), or it is in a straight column of 3 or more
+ *   such numbers (same left edge, within 3 px) that count up from the top down (line numbers). A table or the
+ *   numbers of a figure that stick out of the column do not count up like that: they stay.
  */
-export function indexPdfText(root: Element): TextIndex {
-  type Run = { node: Text; box: DOMRect; page: Element | null };
-  const runs: Run[] = [];
-  for (const span of root.querySelectorAll(".textLayer span")) {
-    const node = [...span.childNodes].find((child): child is Text => child.nodeType === Node.TEXT_NODE);
-    if (node === undefined || node.data === "") continue;
-    runs.push({ node, box: span.getBoundingClientRect(), page: span.closest(".pdf-page") });
-  }
-  // The runs in lines: a run on the same page at about the same height joins the line.
-  const lines: { runs: Run[]; box: PdfLine }[] = [];
+export function sideNumbers(runs: readonly { text: string; left: number; right: number; top: number; page: unknown }[]): boolean[] {
+  const columns = new Map<unknown, { left: number; right: number; top: number; bottom: number }>();
   for (const run of runs) {
-    const line = lines[lines.length - 1];
-    const height = line === undefined ? 1 : Math.max(1, Math.min(line.box.height, run.box.height));
-    if (line !== undefined && run.page === line.runs[0]!.page && Math.abs(run.box.top - line.box.top) < height * 0.5 && run.box.left >= line.box.left - height) {
-      line.runs.push(run);
-      line.box.right = Math.max(line.box.right, run.box.right);
-      line.box.text += run.node.data;
+    if (run.text.trim().length < 15) continue;
+    const column = columns.get(run.page);
+    columns.set(
+      run.page,
+      column === undefined
+        ? { left: run.left, right: run.right, top: run.top, bottom: run.top }
+        : { left: Math.min(column.left, run.left), right: Math.max(column.right, run.right), top: Math.min(column.top, run.top), bottom: Math.max(column.bottom, run.top) },
+    );
+  }
+  // The candidates on each side of each page.
+  const groups = new Map<string, number[]>();
+  const pageIds = new Map<unknown, number>();
+  runs.forEach((run, at) => {
+    const column = columns.get(run.page);
+    if (column === undefined || !/^\s*\d{1,4}\s*$/.test(run.text)) return;
+    const side = run.right <= column.left ? "left" : run.left >= column.right ? "right" : null;
+    if (side === null) return;
+    if (!pageIds.has(run.page)) pageIds.set(run.page, pageIds.size);
+    const key = `${pageIds.get(run.page)}:${side}`;
+    groups.set(key, [...(groups.get(key) ?? []), at]);
+  });
+  const out = runs.map(() => false);
+  for (const members of groups.values()) {
+    if (members.length === 1) {
+      const run = runs[members[0]!]!;
+      const column = columns.get(run.page)!;
+      out[members[0]!] = run.top < column.top || run.top > column.bottom;
       continue;
     }
-    lines.push({ runs: [run], box: { page: run.page, top: run.box.top, left: run.box.left, right: run.box.right, height: run.box.height, text: run.node.data } });
+    // Straight columns: the same left edge. Each must count up from the top down.
+    const rails: number[][] = [];
+    for (const at of members) {
+      const rail = rails.find((list) => Math.abs(runs[list[0]!]!.left - runs[at]!.left) <= 3);
+      if (rail !== undefined) rail.push(at);
+      else rails.push([at]);
+    }
+    for (const rail of rails) {
+      if (rail.length < 3) continue;
+      const ordered = [...rail].sort((a, b) => runs[a]!.top - runs[b]!.top).map((at) => Number(runs[at]!.text.trim()));
+      if (ordered.every((value, index) => index === 0 || value > ordered[index - 1]!)) for (const at of rail) out[at] = true;
+    }
   }
-  const separators = pdfSeparators(lines.map((line) => line.box));
-  const nodes: Text[] = [];
-  const starts: number[] = [];
-  const positions = new Map<Text, number>();
-  let text = "";
-  lines.forEach((line, lineIndex) => {
-    if (lineIndex > 0) {
-      const separator = separators[lineIndex - 1]!;
-      // A soft line end: no space after a hyphen or before a space that is there.
-      text += separator === " " && (/[\s-]$/.test(text) || /^\s/.test(line.runs[0]!.node.data)) ? "" : separator;
-    }
-    let last: DOMRect | null = null;
-    for (const run of line.runs) {
-      if (last !== null) {
-        const height = Math.max(1, Math.min(last.height, run.box.height));
-        const boundarySpace = /\s$/.test(text) || /^\s/.test(run.node.data);
-        if (!boundarySpace && run.box.left - last.right >= height * 0.15) text += " ";
-      }
-      positions.set(run.node, nodes.length);
-      nodes.push(run.node);
-      starts.push(text.length);
-      text += run.node.data.replace(/[\t\n\r\f\v]/g, " ");
-      last = run.box;
-    }
-  });
-  return { text, nodes, starts, positions };
+  return out;
 }
 
 /** One line of a PDF page, in screen units. */

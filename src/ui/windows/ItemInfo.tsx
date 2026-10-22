@@ -1,8 +1,9 @@
-// Item times, one on each line: created, modified, opened (shown), and the date that the user types (edited).
-// They show only if the setting "Show item dates" is on.
+// The file details of an item, one on each line: created, modified, opened (shown), the word count of its text,
+// and the date that the user types (edited). They show only if the setting "Show file details" is on.
 // An item on a calendar shows its days and time ("From", "To") in place of the date: they set the date.
 
 import { setItemDate } from "../../core/actions";
+import { countWords } from "../../core/wordCount";
 import { uiLocale } from "../i18n/i18n";
 import { setCardSchedule } from "../../core/groups";
 import type { Id, PlaceLink } from "../../core/types";
@@ -27,6 +28,8 @@ export function ItemInfo({ itemId }: { itemId: Id }) {
       <dd>{formatTime(item.modified ?? item.created)}</dd>
       <dt>Opened</dt>
       <dd>{formatTime(session.openedAt(itemId))}</dd>
+      <dt>Words</dt>
+      <dd>{countWords(session.store.get("texts", itemId)?.body ?? "").toLocaleString(uiLocale())}</dd>
       {onCalendar !== undefined ? (
         <>
           <dt>Days</dt>

@@ -2,12 +2,13 @@
 // Board background images come from the canvas menu or the "Image…" button. They are copied into images/ of the vault.
 
 import { ImagePlus, Palette, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { setBoardBackground, setCardColor } from "../../core/actions";
 import type { Command } from "../../core/commands";
 import type { Id } from "../../core/types";
 import type { Session } from "../../io/session";
 import { useRunCommand, useSession, useSessionState } from "./sessionContext";
+import { useDismiss } from "./useDismiss";
 
 /** Dark backgrounds that keep the board readable, then bright colors for cards. */
 export const BOARD_SWATCHES = ["#1c1c1e", "#2c2c2e", "#1b2433", "#1d2b24", "#2e2419", "#2a2036", "#331d22", "#f2f2f7"];
@@ -43,17 +44,7 @@ export function ColorManager({ boardId, placeIds }: { boardId: Id; placeIds: rea
   const own = session.store.get("items", boardId)?.background ?? null;
   const current = scope === "board" ? own : settings.defaultBackground;
 
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (event: PointerEvent) => frame.current !== null && !frame.current.contains(event.target as Node) && setOpen(false);
-    const onKeyDown = (event: KeyboardEvent) => event.key === "Escape" && setOpen(false);
-    window.addEventListener("pointerdown", onPointerDown);
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener("pointerdown", onPointerDown);
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, [open]);
+  useDismiss(open, frame, () => setOpen(false));
 
   const setBackground = (value: string | null) => void applyBackground(session, runCommand, scope, boardId, value);
   const setCards = (color: string | null) => runCommand(setCardColor(session.context, placeIds, color));

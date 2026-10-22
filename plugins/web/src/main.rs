@@ -3,10 +3,12 @@
 //! - Protocol: JSON lines on stdin and stdout (see docs/PLUGINS.md in the app repository).
 //! - "save_page" gets the page and its images, styles, and fonts. They go into the page as data.
 //!   Scripts, frames, and forms are removed. The app stores the result in the vault.
-//! - Network: only for the page that the user asks to save. The plugin keeps nothing.
+//! - "media_info" reads the title, the artist, and the cover of a media link (see media.rs).
+//! - Network: only for the page that the user asks to save or to read. The plugin keeps nothing.
 
 mod css;
 mod fetch;
+mod media;
 mod page;
 
 use std::io::{BufRead, Write};
@@ -38,7 +40,7 @@ impl Plugin {
             "info" => Ok(json!({
                 "title": "Web pages",
                 "icon": "globe",
-                "description": "Saves a web page as one file in the vault, to read it offline.",
+                "description": "Saves a web page as one file in the vault, to read it offline. Reads the title, the artist, and the cover of a media link (on a click).",
                 "options": [],
                 "actions": [],
             })),
@@ -50,6 +52,10 @@ impl Plugin {
                     Some(bytes) => json!({ "title": saved.title, "url": saved.url, "kind": "pdf", "data": base64::engine::general_purpose::STANDARD.encode(bytes) }),
                     None => json!({ "title": saved.title, "url": saved.url, "kind": "html", "html": saved.html }),
                 })
+            }
+            "media_info" => {
+                let url = params.get("url").and_then(Value::as_str).ok_or("\"url\" is missing.")?;
+                media::media_info(url)
             }
             "cancel" => {
                 self.cancel.store(true, Ordering::SeqCst);

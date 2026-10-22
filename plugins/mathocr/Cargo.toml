@@ -1,0 +1,32 @@
+[package]
+name = "inspoboard-mathocr"
+version = "0.1.0"
+edition = "2024"
+description = "Inspoboard plugin: finds formulas in page images and reads them as LaTeX (Pix2Text models, ONNX Runtime)."
+license = "MIT"
+publish = false
+
+# Not part of the app workspace: the app build never builds this plugin.
+[workspace]
+
+[[bin]]
+name = "inspoboard-mathocr"
+path = "src/main.rs"
+
+[dependencies]
+serde_json = "1.0"
+sha2 = "0.10"
+base64 = "0.22"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+# ONNX Runtime. The build downloads its library (once); the plugin itself uses no network for it.
+ort = "=2.0.0-rc.13"
+# HTTPS only, for the model download. No other network use.
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+regex = "1"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+lto = "thin"
+strip = true

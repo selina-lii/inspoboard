@@ -1,0 +1,323 @@
+<meta charset="utf-8">
+<title>Board Tour Demo</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  /* Layout: the 3D view fills the page (the app's galaxy view); a slim HUD on top and a control strip at the bottom. One deep-space look. */
+  :root {
+    --space: #05070d; --fg: #e9ecf5; --muted: #8e96ab; --panel: rgba(16, 20, 32, 0.62); --line: rgba(255, 255, 255, 0.12);
+    --accent: #8fb0ff; --warm: #ffd60a;
+    --display: "Figtree", system-ui, sans-serif; --mono: "JetBrains Mono", ui-monospace, monospace;
+    color-scheme: dark;
+  }
+  html, body { height: 100%; }
+  body { background: var(--space); color: var(--fg); font-family: var(--display); overflow: hidden; }
+  #stage { position: fixed; inset: 0; }
+  canvas { display: block; }
+  .labels { position: fixed; inset: 0; pointer-events: none; }
+  .label { position: absolute; transform: translate(-50%, 10px); font-size: 11px; font-weight: 600; color: var(--fg); text-shadow: 0 1px 3px #000; white-space: nowrap; opacity: 0.85; }
+  .label.major { font-size: 13px; color: #fff; }
+  .label.current { color: var(--warm); }
+  .hud { position: fixed; top: calc(12px + env(safe-area-inset-top, 0px)); left: max(16px, env(safe-area-inset-left, 0px)); right: max(16px, env(safe-area-inset-right, 0px)); display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; pointer-events: none; }
+  .hud h1 { margin: 0; font-size: 15px; font-weight: 700; letter-spacing: 0.02em; }
+  .hud .now { font-size: 13px; color: var(--muted); }
+  .hud .now b { color: var(--warm); font-weight: 600; }
+  .bar { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(14px + env(safe-area-inset-bottom, 0px)); width: min(760px, calc(100vw - 32px)); background: var(--panel); border: 1px solid var(--line); border-radius: 14px; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); padding: 10px 12px; display: grid; gap: 10px; }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+  button { font: inherit; font-size: 12px; color: var(--fg); background: rgba(255, 255, 255, 0.06); border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+  button:hover { background: rgba(255, 255, 255, 0.12); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button.primary { background: var(--accent); color: #0b1020; border-color: transparent; font-weight: 700; min-width: 84px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; background: transparent; }
+  .seg button.on { background: rgba(143, 176, 255, 0.25); color: #fff; }
+  .muted { color: var(--muted); font-size: 12px; }
+  .num { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 12px; color: var(--muted); }
+  .progress { position: relative; height: 22px; flex: 1; min-width: 160px; cursor: pointer; }
+  .progress .track { position: absolute; left: 0; right: 0; top: 10px; height: 2px; background: var(--line); border-radius: 1px; }
+  .progress .fill { position: absolute; left: 0; top: 10px; height: 2px; background: var(--accent); border-radius: 1px; }
+  .progress .stop { position: absolute; top: 5px; width: 12px; height: 12px; margin-left: -6px; border-radius: 50%; border: 2px solid var(--accent); background: var(--space); }
+  .progress .stop.done { background: var(--accent); }
+  .progress .stop.current { border-color: var(--warm); background: var(--warm); }
+  .spacer { flex: 1; }
+</style>
+
+<div id="stage"></div>
+<div class="labels" id="labels"></div>
+<div class="hud">
+  <h1>Tour</h1>
+  <span class="now" id="now">Starting…</span>
+</div>
+<div class="bar" role="group" aria-label="Tour controls">
+  <div class="row">
+    <button class="primary" id="play">Pause</button>
+    <span class="seg" role="group" aria-label="Speed">
+      <button data-speed="3">Slow</button><button data-speed="6" class="on">Cruise</button><button data-speed="11">Fast</button>
+    </span>
+    <span class="muted">Fixed speed · Space: pause</span>
+    <span class="spacer"></span>
+    <button id="prev">◀ Stop</button><button id="next">Stop ▶</button>
+  </div>
+  <div class="row">
+    <div class="progress" id="progress" title="Click to jump along the tour"><div class="track"></div><div class="fill" id="fill"></div></div>
+    <span class="num" id="time">0:00 / 0:00</span>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(() => {
+  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  // ---- A sample universe: boards (planets) with their cards around them, loose cards, links, one radial. ----
+  let seed = 7;
+  const random = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+  const KINDS = {
+    board: { color: 0x9fb6ff, size: 1.15 }, note: { color: 0xffd60a, size: 0.35 }, page: { color: 0xf2f2f7, size: 0.38 },
+    flash: { color: 0x6495ed, size: 0.32 }, quote: { color: 0xf4eed9, size: 0.3 }, comment: { color: 0xff2bd6, size: 0.26 },
+    url: { color: 0x2f5fd0, size: 0.28 }, calendar: { color: 0x4a90ff, size: 0.95 }, radial: { color: 0xff8f8f, size: 0.8 },
+  };
+  const SMALL = ["note", "page", "flash", "quote", "comment", "url", "note", "page"];
+  const BOARD_NAMES = ["Kyoto trip", "Thesis", "Reading list", "Garden plans", "Recipes", "Studio", "Music theory"];
+  const CARD_NAMES = ["Train tickets", "Chapter 2", "Temple hours", "Seed order", "Ramen", "Lighting", "Modes", "Sources", "Budget", "Draft", "Quotes", "Tomatoes", "Lens", "Scales", "Notes", "Index", "Outline", "Map", "Photos", "Sketch", "Plan B", "Figures", "Soil test", "Chords"];
+  const stars = [];
+  const links = [];
+  function addStar(name, kind, position, parent) {
+    const star = { name, kind, position, parent, children: [], links: 0 };
+    stars.push(star);
+    if (parent) parent.children.push(star);
+    return star;
+  }
+  const majors = [];
+  BOARD_NAMES.forEach((name, i) => {
+    const angle = (i / BOARD_NAMES.length) * Math.PI * 2 + random() * 0.4;
+    const radius = 26 + random() * 16;
+    const center = new THREE.Vector3(Math.cos(angle) * radius, (random() - 0.5) * 14, Math.sin(angle) * radius);
+    const kind = i === 3 ? "calendar" : i === 5 ? "radial" : "board";
+    const board = addStar(name, kind, center, null);
+    majors.push(board);
+    const count = 8 + Math.floor(random() * 12);
+    for (let k = 0; k < count; k += 1) {
+      // Fibonacci ball around the board, each at its own distance (the radial look).
+      const y = 1 - (2 * (k + 0.5)) / count, ring = Math.sqrt(1 - y * y), a = k * 2.39996 + random();
+      const d = 3.2 + random() * 2.6;
+      const offset = new THREE.Vector3(Math.cos(a) * ring, y * 0.7, Math.sin(a) * ring).multiplyScalar(d);
+      addStar(CARD_NAMES[(k + i * 5) % CARD_NAMES.length], SMALL[(k + i) % SMALL.length], center.clone().add(offset), board);
+    }
+  });
+  // Loose cards between the boards.
+  for (let k = 0; k < 40; k += 1) addStar("", SMALL[k % SMALL.length], new THREE.Vector3((random() - 0.5) * 90, (random() - 0.5) * 30, (random() - 0.5) * 90), null);
+  // Links between boards and some cards.
+  for (let k = 0; k < majors.length; k += 1) {
+    const a = majors[k], b = majors[(k + 2) % majors.length];
+    links.push([a, b]); a.links += 1; b.links += 1;
+  }
+  for (let k = 0; k < 14; k += 1) {
+    const a = stars[Math.floor(random() * stars.length)], b = stars[Math.floor(random() * stars.length)];
+    if (a !== b) { links.push([a, b]); a.links += 1; b.links += 1; }
+  }
+
+  // ---- Scene ----
+  const stage = document.getElementById("stage");
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  stage.appendChild(renderer.domElement);
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x05070d);
+  scene.fog = new THREE.FogExp2(0x05070d, 0.0085);
+  const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 600);
+  scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+  const sun = new THREE.PointLight(0xffffff, 1.2, 0, 2); sun.position.set(30, 40, 20); scene.add(sun);
+
+  // A soft glow sprite, drawn once on a canvas.
+  const glowCanvas = document.createElement("canvas"); glowCanvas.width = glowCanvas.height = 64;
+  const g = glowCanvas.getContext("2d"); const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grad.addColorStop(0, "rgba(255,255,255,0.9)"); grad.addColorStop(0.3, "rgba(255,255,255,0.25)"); grad.addColorStop(1, "rgba(255,255,255,0)");
+  g.fillStyle = grad; g.fillRect(0, 0, 64, 64);
+  const glow = new THREE.CanvasTexture(glowCanvas);
+
+  for (const star of stars) {
+    const look = KINDS[star.kind];
+    const geometry = star.kind === "note" || star.kind === "flash" || star.kind === "quote" ? new THREE.BoxGeometry(look.size * 1.6, look.size * 1.3, look.size * 0.2)
+      : star.kind === "page" ? new THREE.BoxGeometry(look.size * 1.2, look.size * 1.6, look.size * 0.08)
+      : new THREE.SphereGeometry(look.size, 24, 16);
+    const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: look.color, emissive: look.color, emissiveIntensity: star.parent ? 0.25 : 0.4, roughness: 0.6 }));
+    mesh.position.copy(star.position);
+    mesh.rotation.set(random() * 0.6, random() * Math.PI, 0);
+    scene.add(mesh);
+    star.mesh = mesh;
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: glow, color: look.color, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+    sprite.scale.setScalar(look.size * (star.parent || star.kind === "note" ? 3 : 5));
+    sprite.position.copy(star.position);
+    scene.add(sprite);
+    if (star.kind === "board") {
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(look.size * 1.7, 0.05, 8, 64), new THREE.MeshBasicMaterial({ color: 0xc8d4ff, transparent: true, opacity: 0.6 }));
+      ring.position.copy(star.position); ring.rotation.x = Math.PI / 2.4; scene.add(ring);
+    }
+    if (star.parent) {
+      const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([star.parent.position, star.position]), new THREE.LineBasicMaterial({ color: 0x8e96ab, transparent: true, opacity: 0.25 }));
+      scene.add(line);
+    }
+  }
+  for (const [a, b] of links) {
+    scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([a.position, b.position]), new THREE.LineBasicMaterial({ color: 0x8fb0ff, transparent: true, opacity: 0.35 })));
+  }
+  // Background star dust.
+  const dust = new THREE.BufferGeometry(); const dustPoints = [];
+  for (let k = 0; k < 2500; k += 1) { const r = 160 + random() * 200, t = random() * Math.PI * 2, p = Math.acos(2 * random() - 1); dustPoints.push(r * Math.sin(p) * Math.cos(t), r * Math.cos(p), r * Math.sin(p) * Math.sin(t)); }
+  dust.setAttribute("position", new THREE.Float32BufferAttribute(dustPoints, 3));
+  scene.add(new THREE.Points(dust, new THREE.PointsMaterial({ color: 0xaab4d0, size: 0.6, sizeAttenuation: true, transparent: true, opacity: 0.7 })));
+
+  // ---- The tour path ----
+  // 1. Major stars: the most cards and links. 2. Order: nearest neighbor from the camera start.
+  // 3. At each stop the path makes a tilted loop around the star (we see what is around it), then leaves for the next.
+  // 4. One closed Catmull-Rom curve. getPointAt() is by arc length: the camera moves at one fixed speed.
+  const weight = (star) => star.children.length * 2 + star.links;
+  const chosen = [...majors].sort((a, b) => weight(b) - weight(a)).slice(0, 6);
+  const order = [];
+  let from = new THREE.Vector3(0, 40, 90);
+  const left = [...chosen];
+  while (left.length > 0) {
+    left.sort((a, b) => a.position.distanceTo(from) - b.position.distanceTo(from));
+    const next = left.shift(); order.push(next); from = next.position;
+  }
+  const controlPoints = [];
+  const stopRanges = [];
+  // The whole board: a wide, high view at the start and at the end (the camera pans slowly across it).
+  const boardCenter = new THREE.Vector3();
+  const boardRadius = Math.max(...majors.map((star) => star.position.length())) + 15;
+  const overview = new THREE.Vector3(0, boardRadius * 0.9, boardRadius * 1.7);
+  controlPoints.push(overview.clone().add(new THREE.Vector3(-boardRadius * 0.25, 0, 0)), overview.clone().add(new THREE.Vector3(boardRadius * 0.25, 0, 0)));
+  order.forEach((star, i) => {
+    const radius = 9 + star.children.length * 0.15;
+    const prev = order[(i - 1 + order.length) % order.length].position;
+    // Enter the loop from the side that faces the previous stop; the loop is tilted a little at random.
+    const enter = prev.clone().sub(star.position).setY(0).normalize();
+    const startAngle = Math.atan2(enter.z, enter.x);
+    const tilt = (random() - 0.5) * 0.7;
+    // Half a round is enough to see most of what is around a star.
+    const turns = 0.45;
+    const steps = 4;
+    const first = controlPoints.length;
+    for (let s = 0; s <= steps; s += 1) {
+      const a = startAngle + (s / steps) * turns * Math.PI * 2;
+      const p = new THREE.Vector3(Math.cos(a) * radius, Math.sin(a * 1) * radius * tilt + 2.5, Math.sin(a) * radius);
+      controlPoints.push(star.position.clone().add(p));
+    }
+    stopRanges.push({ star, first, last: controlPoints.length - 1, radius });
+    // A throw between stops: a high arc that bends to one side, as a thrown ball (the camera sees the wide view).
+    // After the last stop, the arc goes back up to the whole board.
+    const nextStar = i + 1 < order.length ? order[i + 1].position : overview;
+    const exit = controlPoints[controlPoints.length - 1];
+    const span = exit.distanceTo(nextStar);
+    const side = new THREE.Vector3().subVectors(nextStar, exit).cross(new THREE.Vector3(0, 1, 0)).normalize();
+    const mid = exit.clone().lerp(nextStar, 0.5).add(side.multiplyScalar(span * 0.22 * (i % 2 === 0 ? 1 : -1)));
+    mid.y += span * 0.32 + 4;
+    controlPoints.push(mid);
+  });
+  const curve = new THREE.CatmullRomCurve3(controlPoints, true, "centripetal", 0.5);
+  const length = curve.getLength();
+  // Where each stop starts and ends on the curve (0..1, by arc length): the nearest curve parameter of its first and last control point.
+  const lengths = curve.getLengths(controlPoints.length * 40);
+  const uAtPoint = (index) => lengths[index * 40] / length;
+  stopRanges.forEach((stop) => { stop.u0 = uAtPoint(stop.first); stop.u1 = uAtPoint(stop.last); });
+  // A faint line for the path.
+  scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(curve.getSpacedPoints(800)), new THREE.LineBasicMaterial({ color: 0xffd60a, transparent: true, opacity: 0.12 })));
+
+  // ---- Labels (DOM over the canvas) ----
+  const labelLayer = document.getElementById("labels");
+  const labeled = stars.filter((star) => star.name !== "");
+  for (const star of labeled) {
+    const el = document.createElement("div");
+    el.className = `label${star.parent ? "" : " major"}`;
+    el.textContent = star.name;
+    labelLayer.appendChild(el);
+    star.label = el;
+  }
+
+  // ---- Controls ----
+  let u = 0, playing = !reduced, speed = 6; // speed: world units per second (fixed).
+  const playButton = document.getElementById("play");
+  const setPlaying = (on) => { playing = on; playButton.textContent = on ? "Pause" : "Play"; };
+  setPlaying(playing);
+  playButton.addEventListener("click", () => setPlaying(!playing));
+  addEventListener("keydown", (event) => { if (event.code === "Space") { event.preventDefault(); setPlaying(!playing); } });
+  document.querySelectorAll("[data-speed]").forEach((button) => button.addEventListener("click", () => {
+    speed = Number(button.dataset.speed);
+    document.querySelectorAll("[data-speed]").forEach((other) => other.classList.toggle("on", other === button));
+  }));
+  const stopIndexAt = (value) => {
+    for (let i = 0; i < stopRanges.length; i += 1) { const s = stopRanges[i]; if (value >= s.u0 - 1e-6 && value <= s.u1) return i; }
+    return -1;
+  };
+  const nextStopFrom = (value) => stopRanges.findIndex((s) => s.u0 > value + 1e-4);
+  document.getElementById("next").addEventListener("click", () => { const i = nextStopFrom(u); u = (i === -1 ? stopRanges[0] : stopRanges[i]).u0; });
+  document.getElementById("prev").addEventListener("click", () => {
+    const before = stopRanges.filter((s) => s.u0 < u - 0.01);
+    u = (before.length > 0 ? before[before.length - 1] : stopRanges[stopRanges.length - 1]).u0;
+  });
+  const progress = document.getElementById("progress");
+  stopRanges.forEach((stop) => { const dot = document.createElement("span"); dot.className = "stop"; dot.style.left = `${stop.u0 * 100}%`; dot.title = stop.star.name; progress.appendChild(dot); stop.dot = dot; });
+  progress.addEventListener("click", (event) => { const box = progress.getBoundingClientRect(); u = Math.min(0.999, Math.max(0, (event.clientX - box.left) / box.width)); });
+  const fill = document.getElementById("fill"), time = document.getElementById("time"), now = document.getElementById("now");
+  const clock = (seconds) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
+
+  // ---- The camera: position on the curve; it looks ahead, and at a stop it turns to the star (smoothly). ----
+  const target = new THREE.Vector3();
+  const smoothTarget = curve.getPointAt(0.01).clone();
+  const tmp = new THREE.Vector3();
+  function resize() {
+    const w = innerWidth, h = innerHeight;
+    renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
+  }
+  addEventListener("resize", resize); resize();
+
+  let last = performance.now();
+  function frame(timeNow) {
+    // The first frame time can be a little before `last`: no negative step (the curve takes 0..1 only).
+    const dt = Math.min(0.05, Math.max(0, (timeNow - last) / 1000)); last = timeNow;
+    if (playing) u = (((u + (speed * dt) / length) % 1) + 1) % 1;
+    const position = curve.getPointAt(u);
+    camera.position.copy(position);
+    // Look-ahead point, and the star of the stop (a weight that grows near the loop).
+    const ahead = curve.getPointAt((u + 12 / length) % 1);
+    let focus = -1, w = 0;
+    stopRanges.forEach((stop, i) => {
+      const d = position.distanceTo(stop.star.position);
+      const near = 1 - Math.min(1, Math.max(0, (d - stop.radius * 1.15) / (stop.radius * 1.4)));
+      if (near > w) { w = near; focus = i; }
+    });
+    target.copy(ahead);
+    if (focus !== -1) target.lerp(stopRanges[focus].star.position, w * w * (3 - 2 * w));
+    // Near the whole-board view: look at the middle of the board.
+    const wide = 1 - Math.min(1, Math.max(0, (position.distanceTo(overview) - boardRadius * 0.3) / (boardRadius * 0.5)));
+    target.lerp(boardCenter, wide * wide * (3 - 2 * wide));
+    // Exponential smoothing: no jerk when the look changes.
+    smoothTarget.lerp(target, 1 - Math.exp(-dt * 2.2));
+    camera.lookAt(smoothTarget);
+
+    // HUD
+    const current = stopIndexAt(u);
+    const nextIndex = current !== -1 ? (current + 1) % stopRanges.length : (nextStopFrom(u) === -1 ? 0 : nextStopFrom(u));
+    now.innerHTML = wide > 0.6 ? `<b>The whole board</b> · ${stars.length} items · ${majors.length} groups` : current !== -1 ? `Circling <b>${stopRanges[current].star.name}</b> · ${stopRanges[current].star.children.length} cards · next: ${stopRanges[nextIndex].star.name}` : `Cruising to <b>${stopRanges[nextIndex].star.name}</b>`;
+    fill.style.width = `${u * 100}%`;
+    stopRanges.forEach((stop, i) => { stop.dot.classList.toggle("done", stop.u1 < u); stop.dot.classList.toggle("current", i === current); });
+    time.textContent = `${clock((u * length) / speed)} / ${clock(length / speed)}`;
+
+    // Labels: majors always (when in front), cards only near the camera.
+    for (const star of labeled) {
+      tmp.copy(star.position).project(camera);
+      const distance = camera.position.distanceTo(star.position);
+      const show = tmp.z < 1 && Math.abs(tmp.x) < 1.1 && Math.abs(tmp.y) < 1.1 && (star.parent === null ? distance < 120 : distance < 16);
+      star.label.style.display = show ? "" : "none";
+      if (!show) continue;
+      star.label.style.left = `${((tmp.x + 1) / 2) * innerWidth}px`;
+      star.label.style.top = `${((1 - tmp.y) / 2) * innerHeight}px`;
+      star.label.style.opacity = star.parent === null ? "0.95" : String(Math.max(0.2, 1 - distance / 16));
+      star.label.classList.toggle("current", current !== -1 && stopRanges[current].star === star);
+    }
+    renderer.render(scene, camera);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>

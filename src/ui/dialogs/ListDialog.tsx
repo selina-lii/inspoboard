@@ -23,9 +23,11 @@ type Props = {
   onChoose(entry: ListEntry, query: string): void;
   onClose(): void;
   emptyText?: string;
+  /** Shows above the query field (for example a choice that changes the entries). */
+  header?: ReactNode;
 };
 
-export function ListDialog({ title, placeholder, initialQuery, entriesFor, onChoose, onClose, emptyText }: Props) {
+export function ListDialog({ title, placeholder, initialQuery, entriesFor, onChoose, onClose, emptyText, header }: Props) {
   const [query, setQuery] = useState(initialQuery ?? "");
   const [active, setActive] = useState(0);
   const input = useRef<HTMLInputElement>(null);
@@ -58,6 +60,7 @@ export function ListDialog({ title, placeholder, initialQuery, entriesFor, onCho
   return (
     <div className="dialog-backdrop" onMouseDown={onClose}>
       <MovablePanel className="dialog" titleClassName="dialog-title" label={title} title={title} onMouseDown={(event) => event.stopPropagation()}>
+        {header}
         <input
           ref={input}
           className="dialog-query"

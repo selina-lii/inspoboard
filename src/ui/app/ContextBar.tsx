@@ -1,8 +1,9 @@
 // Controls for the current selection. They show in the tool bar, at the right.
 
 import { OBJECT_VIEWS } from "../../core/types";
-import { Combine, FileText, FolderInput, LayoutGrid, Link2, Maximize2, Minimize2, PenLine, Split, StickyNote, type LucideIcon } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Combine, EyeOff, FileText, FolderInput, LayoutGrid, Link2, Maximize2, Minimize2, PenLine, Split, StickyNote, type LucideIcon } from "lucide-react";
+import { isPassageLink } from "../../core/linkEnds";
+import { useRef, useState, type ReactNode } from "react";
 import {
   createRelation,
   joinStamps,
@@ -21,6 +22,8 @@ import { titleOf } from "../board/boardModel";
 import { CommitField } from "./fields";
 import { useRunCommand, useSession, useSessionState, useStoreRevision } from "./sessionContext";
 import { useWorkspaceActions } from "./workspaceActions";
+import { useDismiss } from "./useDismiss";
+import { ColorSelect } from "./ColorSelect";
 
 
 export function ContextBar({ selection }: { selection: BoardSelection }) {
@@ -98,6 +101,22 @@ export function ContextBar({ selection }: { selection: BoardSelection }) {
           disabled={readOnly}
           onChange={(end) => runCommand(updateRelation(session.context, linkId, { end }))}
         />
+        <ColorSelect value={link.color ?? null} disabled={readOnly} label="Line color" defaultLabel="Default line color" onChange={(color) => runCommand(updateRelation(session.context, linkId, { color }))} />
+        <button
+          className={`icon-button${link.dashed === true ? " active" : ""}`}
+          data-tip={link.dashed === true ? "Dashed line: make it solid" : "Solid line: make it dashed"}
+          aria-pressed={link.dashed === true}
+          disabled={readOnly}
+          onClick={() => runCommand(updateRelation(session.context, linkId, { dashed: link.dashed !== true }))}
+        >
+          <DashIcon dashed={link.dashed === true} />
+        </button>
+        {/* A link made from text: it shows here because the user put it on boards. This takes it off again. */}
+        {isPassageLink(session.store, link) && (
+          <button className="icon-button" data-tip="Show this text link only in its items (not on boards)" disabled={readOnly} onClick={() => runCommand(updateRelation(session.context, linkId, { onBoard: false }))}>
+            <EyeOff size={16} />
+          </button>
+        )}
       </>,
       <>
         <CommitField
@@ -145,10 +164,6 @@ export function ContextBar({ selection }: { selection: BoardSelection }) {
   const place = placeId === undefined ? undefined : session.store.get("links", placeId);
   return layout(
     <>
-      {/* Small objects (comment, link, action item, flashcard) and groups keep their type: no note/page/board button. */}
-      {place !== undefined && place.kind === "place" && session.store.has("items", recordId) && !OBJECT_VIEWS.includes(place.view) && place.view !== "group" && (
-        <StateButton placeId={place.id} itemId={recordId} view={place.view} disabled={readOnly} />
-      )}
       {session.store.has("items", recordId) && (
         <button className="icon-button" data-tip="Edit text" onClick={() => actions.openText(recordId)}>
           <PenLine size={16} />
@@ -169,6 +184,14 @@ export function ContextBar({ selection }: { selection: BoardSelection }) {
       <button className="icon-button" data-tip="Zoom into this item" onClick={() => actions.openRecord(recordId)}>
         <Maximize2 size={16} />
       </button>
+      {/* The note/page/board button is last, after a divider: away from the buttons that are used often.
+          Small objects (comment, link, action item, flashcard) and groups keep their type: no button. */}
+      {place !== undefined && place.kind === "place" && session.store.has("items", recordId) && !OBJECT_VIEWS.includes(place.view) && place.view !== "group" && (
+        <>
+          <span className="divider" />
+          <StateButton placeId={place.id} itemId={recordId} view={place.view} disabled={readOnly} />
+        </>
+      )}
     </>,
   );
 }
@@ -221,18 +244,7 @@ function CapIcon({ cap, side }: { cap: LinkCap; side: "start" | "end" }) {
 function CapSelect({ side, value, disabled, onChange }: { side: "start" | "end"; value: LinkCap; disabled: boolean; onChange(cap: LinkCap): void }) {
   const [open, setOpen] = useState(false);
   const host = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const close = (event: PointerEvent | KeyboardEvent) => {
-      if (event instanceof KeyboardEvent ? event.key === "Escape" : !host.current?.contains(event.target as Node)) setOpen(false);
-    };
-    window.addEventListener("pointerdown", close);
-    window.addEventListener("keydown", close);
-    return () => {
-      window.removeEventListener("pointerdown", close);
-      window.removeEventListener("keydown", close);
-    };
-  }, [open]);
+  useDismiss(open, host, () => setOpen(false));
   const label = side === "start" ? "Line start" : "Line end";
   return (
     <div className="cap-select" ref={host}>
@@ -258,6 +270,15 @@ function CapSelect({ side, value, disabled, onChange }: { side: "start" | "end";
         </div>
       )}
     </div>
+  );
+}
+
+/** A short line, solid or dashed. */
+function DashIcon({ dashed }: { dashed: boolean }) {
+  return (
+    <svg width={16} height={16} viewBox="0 0 16 16" aria-hidden>
+      <line x1={1} y1={8} x2={15} y2={8} stroke="currentColor" strokeWidth={2} strokeDasharray={dashed ? "3 2.5" : undefined} />
+    </svg>
   );
 }
 

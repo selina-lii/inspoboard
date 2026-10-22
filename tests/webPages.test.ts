@@ -42,26 +42,19 @@ describe("saved web pages", () => {
     expect(notes.margin).toBeUndefined();
   });
 
-  it("reads margin items, the margin, and the page width", () => {
-    const notes = readNotes(
-      JSON.stringify({
-        version: 1,
-        items: [
-          { id: "c1", kind: "comment", x: -200, y: 40, w: 180, text: "Why?", color: "pink", author: "Me", created: "2026-10-08T10:00:00Z" },
-          { id: "n1", kind: "note", x: 900, y: 10, text: "", color: "nope" },
-          { id: "x1", kind: "shape", x: 0, y: 0, text: "" },
-          { id: "x2", kind: "note", x: "a", y: 0, text: "" },
-        ],
-        margin: 240,
-        width: 9000,
-      }),
-    );
-    expect(notes.items.map((item) => [item.id, item.w, item.color, item.author])).toEqual([
-      ["c1", 180, "pink", "Me"],
-      ["n1", 200, "yellow", undefined],
-    ]);
+  it("reads the margin and the page width, and keeps old items and unknown fields as they are", () => {
+    const old = [
+      { id: "c1", kind: "comment", x: -200, y: 40, w: 180, text: "Why?", color: "pink", author: "Me", created: "2026-10-08T10:00:00Z" },
+      { id: "x1", kind: "shape", x: 0, y: 0, text: "" },
+    ];
+    const notes = readNotes(JSON.stringify({ version: 1, items: old, margin: 240, width: 9000, future: { a: 1 } }));
+    // Format-1 entries that the migration could not read: the app does not show them, and a save keeps them.
+    expect(notes.items).toEqual(old);
     expect(notes.margin).toBe(240);
     expect(notes.width).toBeUndefined();
+    const saved = JSON.parse(encodeNotes(notes));
+    expect(saved.items).toEqual(old);
+    expect(saved.future).toEqual({ a: 1 });
     expect(readNotes(encodeNotes(notes))).toEqual(notes);
   });
 
@@ -107,4 +100,28 @@ describe("saving translations to a file", () => {
     expect(withScheme("~/a/x.pdf")).toBe("~/a/x.pdf");
     expect(withScheme("example.com")).toBe("https://example.com");
   });
+});
+
+describe("addresses of link objects", () => {
+  it("are the same file with or without file:// and URL escapes, and the same web page without its fragment", async () => {
+    const { sameAddress } = await import("../src/ui/web/webHomes");
+    expect(sameAddress("file:///Users/me/A%20paper.pdf", "/Users/me/A paper.pdf")).toBe(true);
+    expect(sameAddress(" /Users/me/a.pdf", "/Users/me/a.pdf")).toBe(true);
+    expect(sameAddress("/Users/me/a.pdf", "/Users/me/b.pdf")).toBe(false);
+    expect(sameAddress("https://x.org/p#intro", "https://x.org/p")).toBe(true);
+  });
+});
+
+describe("PDF highlights keep their place on the pages", () => {
+  it("reads and writes the page boxes of a highlight, and keeps fields it does not know", async () => {
+    const { encodeNotes, readNotes } = await import("../src/ui/web/savedPages");
+    const file = JSON.stringify({ version: 1, highlights: [{ id: "h1", start: 0, end: 4, quote: "Text", color: "pink", boxes: [[2, 10.5, 20, 30, 12], ["bad"]], future: { a: 1 } }], scribbles: [], items: [] });
+    const notes = readNotes(file);
+    expect(notes.highlights[0]).toMatchObject({ boxes: [[2, 10.5, 20, 30, 12]], rest: { future: { a: 1 } } });
+    const again = JSON.parse(encodeNotes(notes)).highlights[0];
+    expect(again).toEqual({ id: "h1", start: 0, end: 4, quote: "Text", color: "pink", boxes: [[2, 10.5, 20, 30, 12]], future: { a: 1 } });
+    // An old highlight (no boxes) stays as it was.
+    expect(JSON.parse(encodeNotes(readNotes(JSON.stringify({ highlights: [{ id: "h", start: 1, end: 2, quote: "x", color: "yellow" }] })))).highlights[0]).toEqual({ id: "h", start: 1, end: 2, quote: "x", color: "yellow" });
+  });
+
 });

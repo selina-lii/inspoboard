@@ -58,7 +58,7 @@ export function looksLikeMarkdown(text: string): boolean {
 export function markdownSpeech(text: string): string {
   return text
     .replace(/<[^>\n]+>/g, " ")
-    .replace(/!\[([^\]\n]*)\]\([^)\n]*\)/g, "$1")
+    .replace(/!\[([^\]\n|]*)(?:\|[^\]\n]*)?\]\([^)\n]*\)/g, "$1")
     .replace(/\[([^\]\n]*)\]\([^)\n]*\)/g, "$1")
     .replace(/\[([^\]\n]+)\]\[[^\]\n]*\]/g, "$1")
     .replace(/\[\^[^\]\n]+\]/g, "")
@@ -162,6 +162,13 @@ export function prepareSentences(text: string, sentences: readonly Sentence[], s
   const result: Sentence[] = [];
   for (const sentence of sentences) {
     if (inReferences(sentence)) continue;
+    // A sentence in parts (formulas): each text part is cleaned; the words of a formula stay as they are.
+    if (sentence.parts !== undefined) {
+      const parts = sentence.parts.map((part) => ({ ...part, text: part.formula ? part.text : filterSpeech(words(part.text), skip).trim() })).filter((part) => part.text !== "");
+      const speech = parts.map((part) => part.text).join(" ");
+      if (/[\p{L}\p{N}]/u.test(speech)) result.push({ ...sentence, speech, parts });
+      continue;
+    }
     const speech = filterSpeech(words(sentence.speech), skip);
     if (/[\p{L}\p{N}]/u.test(speech)) result.push({ ...sentence, speech });
   }
@@ -179,7 +186,18 @@ export function prepareSentences(text: string, sentences: readonly Sentence[], s
   }
   // Math letters and other styled forms (𝑃, 𝑿, ², ｆ) become their plain letters: a voice reads 𝑃 as "P", not as a
   // code like "letter 1D443" (PDFs keep formulas as such letters).
-  return result.map((sentence) => ({ ...sentence, speech: plainLetters(sentence.speech) })).sort((a, b) => a.start - b.start);
+  return result
+    .map((sentence) => ({ ...sentence, speech: plainLetters(sentence.speech), ...(sentence.parts === undefined ? {} : { parts: sentence.parts.map((part) => ({ ...part, text: plainLetters(part.text) })) }) }))
+    .sort((a, b) => a.start - b.start);
+}
+
+/**
+ * The cleaning of one sentence, as `prepareSentences` does it (Markdown marks, skip rules, plain letters), for a text:
+ * read aloud uses it for a sentence that it makes again just before it is said (with the words of its formulas).
+ */
+export function speechCleaner(text: string, skip: SpeechSkip, mode: SpeechMarkdown = "auto"): (speech: string) => string {
+  const clean = readingMode(text, mode) !== "plain";
+  return (speech) => plainLetters(filterSpeech(clean ? markdownSpeech(speech) : speech, skip));
 }
 
 /** The plain forms of styled letters and digits (Unicode NFKC), and a space for invisible math operators. */
@@ -224,4 +242,13 @@ export function lineStart(text: string, line: number): number {
 export function matchingLine(line: number, fromLines: number, toLines: number): number {
   if (fromLines === toLines || fromLines <= 1) return Math.min(line, toLines - 1);
   return Math.min(toLines - 1, Math.round((line * (toLines - 1)) / (fromLines - 1)));
+}
+
+/** The words before the text of a page with a subtitle: "<title>. <subtitle>." Undefined: no subtitle. */
+export function leadOf(item: { name: string; subtitle?: string } | undefined): string | undefined {
+  const subtitle = item?.subtitle?.trim() ?? "";
+  if (subtitle === "") return undefined;
+  const end = (words: string) => (/[.!?。！？:：]$/.test(words) ? words : `${words}.`);
+  const name = item!.name.trim();
+  return name === "" ? end(subtitle) : `${end(name)} ${end(subtitle)}`;
 }

@@ -1,0 +1,55 @@
+/* Compare (lab plugin): two texts side by side, as in WinMerge. */
+.compare-view { position: absolute; inset: 0; z-index: 900; display: flex; flex-direction: column; background: var(--bg-board); color: var(--text); }
+.compare-bar { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--border); background: var(--bg-raised); flex-wrap: wrap; }
+.compare-title { font-weight: 600; font-size: 13px; }
+.compare-count { font-size: 12px; color: var(--text-muted); min-width: 120px; }
+.compare-space { flex: 1; }
+.compare-message { padding: 6px 12px; font-size: 12px; color: var(--text-muted); }
+.compare-message.error { color: var(--danger, #d33); }
+/* Rows: left text, a gutter (copy buttons), right text. A change: yellow (changed), red (only left), green (only right). */
+.compare-heads, .compare-row { display: grid; grid-template-columns: minmax(0, 1fr) 44px minmax(0, 1fr); }
+.compare-heads { border-bottom: 1px solid var(--border); font-size: 12px; }
+.compare-head { display: flex; align-items: baseline; gap: 8px; padding: 6px 10px; min-width: 0; }
+.compare-heads > :last-child { grid-column: 3; }
+.compare-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.compare-kind { color: var(--text-faint); font-size: 11px; }
+.compare-rows { flex: 1; overflow: auto; font-size: 13.5px; line-height: 1.6; padding: 8px 0 40vh; }
+.compare-cell { white-space: pre-wrap; overflow-wrap: anywhere; padding: 4px 12px; min-height: 1.6em; }
+.compare-row.same .compare-cell { color: var(--text-muted); }
+.compare-more { grid-column: 1 / 4; justify-self: center; margin: 2px 0 6px; border: none; background: none; color: var(--text-faint); font-size: 11px; cursor: pointer; }
+.compare-more:hover { color: var(--accent); }
+.compare-row.change { margin: 2px 0; cursor: default; }
+.compare-row.change .compare-cell { border-radius: 4px; }
+.compare-row.changed .compare-cell { background: rgba(255, 190, 0, 0.28); }
+.compare-row.removed .compare-cell:first-child { background: rgba(255, 80, 80, 0.24); }
+.compare-row.added .compare-cell:last-child { background: rgba(60, 200, 90, 0.24); }
+.compare-cell.filler { background: repeating-linear-gradient(135deg, transparent 0 5px, var(--border) 5px 6px); opacity: 0.6; min-height: 1em; }
+.compare-row.current .compare-cell:not(.filler) { box-shadow: inset 0 0 0 2px var(--accent); }
+.compare-gutter { display: flex; align-items: center; justify-content: center; gap: 1px; }
+.compare-gutter .icon-button.tiny { padding: 1px; width: 18px; height: 18px; }
+
+/* PDF pages mode: each side in its own pane (its own scroll). */
+.compare-panes { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.compare-pane { overflow: auto; min-width: 0; border-right: 1px solid var(--border); }
+.compare-pane:last-child { border-right: none; }
+.compare-pane.text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13.5px; line-height: 1.6; padding: 12px 16px 40vh; color: var(--text-muted); }
+.compare-pane.pdf { padding: 12px 12px 40vh; background: var(--bg-board); }
+.compare-pdf-page { position: relative; width: 100%; margin: 0 auto 12px; background: #fff; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25); }
+.compare-pdf-page img, .compare-pdf-page canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.compare-page-number { position: absolute; right: 6px; bottom: 4px; font-size: 10px; color: #999; pointer-events: none; }
+/* A change on a page: a box over its words. Changed: yellow; only on the left: red; only on the right: green. */
+.compare-box { position: absolute; border-radius: 2px; mix-blend-mode: multiply; cursor: pointer; }
+.compare-box.changed { background: rgba(255, 190, 0, 0.45); }
+.compare-box.removed { background: rgba(255, 70, 70, 0.4); }
+.compare-box.added { background: rgba(40, 190, 80, 0.4); }
+/* A place between words (the other side has words here): a thin bar. */
+.compare-box.place { min-width: 3px; margin-left: -1px; }
+.compare-box.current { outline: 2px solid var(--accent); outline-offset: 1px; }
+.compare-mark { color: var(--text); border-radius: 2px; cursor: pointer; }
+.compare-mark.changed { background: rgba(255, 170, 0, 0.45); }
+.compare-mark.removed { background: rgba(255, 80, 80, 0.3); }
+.compare-mark.added { background: rgba(60, 200, 90, 0.3); }
+.compare-mark:empty { display: inline-block; width: 3px; height: 1.2em; vertical-align: text-bottom; }
+.compare-mark.current { outline: 2px solid var(--accent); outline-offset: 0; }
+.compare-pane.text.flow { white-space: normal; }
+.compare-bar .segmented button { width: auto; height: 24px; padding: 0 8px; gap: 4px; font-size: 12px; }

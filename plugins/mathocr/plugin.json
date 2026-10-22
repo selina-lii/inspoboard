@@ -1,0 +1,7 @@
+{
+  "protocol": 1,
+  "title": "Math from images",
+  "version": "0.1.0",
+  "exec": "inspoboard-mathocr",
+  "capabilities": ["math-image"]
+}

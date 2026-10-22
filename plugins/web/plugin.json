@@ -3,5 +3,5 @@
   "title": "Web pages",
   "version": "0.1.0",
   "exec": "inspoboard-web",
-  "capabilities": ["save-page"]
+  "capabilities": ["save-page", "media-info"]
 }

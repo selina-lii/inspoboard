@@ -64,3 +64,21 @@ export function textColorOn(color: string): string {
   const luminance = 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
   return luminance > 0.35 ? "#1c1c1e" : "#ffffff";
 }
+
+/** The blob URL of a vault image, or null (no path, or not loaded yet, or it failed). */
+export function useVaultImageUrl(session: Session, path: string | null): string | null {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    setUrl(null);
+    if (path === null) return;
+    let active = true;
+    urlOf(session, path).then(
+      (value) => active && setUrl(value),
+      () => active && setUrl(null),
+    );
+    return () => {
+      active = false;
+    };
+  }, [session, path]);
+  return url;
+}

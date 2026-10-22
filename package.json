@@ -4,13 +4,14 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "predev": "node scripts/copy_pdfjs.mjs",
+    "predev": "node scripts/copy_pdfjs.mjs && node scripts/fetch-pdfium.mjs",
     "dev": "vite",
-    "prebuild": "node scripts/copy_pdfjs.mjs",
+    "prebuild": "node scripts/copy_pdfjs.mjs && node scripts/fetch-pdfium.mjs",
     "build": "tsc -p tsconfig.json && vite build",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.node.json",
     "tauri": "tauri",
+    "app": "tauri build --bundles app && open src-tauri/target/release/bundle/macos/Inspoboard.app",
     "plugin:translate": "cargo build --release --manifest-path plugins/translate/Cargo.toml",
     "plugin:voice": "cargo build --release --manifest-path plugins/voice/Cargo.toml",
     "plugin:voice:dev-install": "npm run plugin:voice && mkdir -p data/plugins/voice && rm -f data/plugins/voice/inspoboard-voice && cp plugins/voice/target/release/inspoboard-voice plugins/voice/plugin.json data/plugins/voice/",
@@ -19,8 +20,12 @@
     "plugin:web:dev-install": "npm run plugin:web && mkdir -p data/plugins/web && rm -f data/plugins/web/inspoboard-web && cp plugins/web/target/release/inspoboard-web plugins/web/plugin.json data/plugins/web/",
     "plugin:chinese": "cargo build --release --manifest-path plugins/chinese/Cargo.toml",
     "plugin:chinese:dev-install": "npm run plugin:chinese && mkdir -p data/plugins/chinese && rm -f data/plugins/chinese/inspoboard-chinese && cp plugins/chinese/target/release/inspoboard-chinese plugins/chinese/plugin.json data/plugins/chinese/",
-    "plugins": "npm run plugin:voice && npm run plugin:translate && npm run plugin:web && npm run plugin:chinese",
-    "plugins:dev-install": "npm run plugin:voice:dev-install && npm run plugin:translate:dev-install && npm run plugin:web:dev-install && npm run plugin:chinese:dev-install"
+    "plugin:compare": "cargo build --release --manifest-path plugins/compare/Cargo.toml",
+    "plugin:compare:dev-install": "npm run plugin:compare && mkdir -p data/plugins/compare && rm -f data/plugins/compare/inspoboard-compare && cp plugins/compare/target/release/inspoboard-compare plugins/compare/plugin.json data/plugins/compare/",
+    "plugin:ask": "cargo build --release --manifest-path plugins/ask/Cargo.toml",
+    "plugin:ask:dev-install": "npm run plugin:ask && mkdir -p data/plugins/ask && rm -f data/plugins/ask/inspoboard-ask && cp plugins/ask/target/release/inspoboard-ask plugins/ask/plugin.json data/plugins/ask/",
+    "plugins": "npm run plugin:voice && npm run plugin:translate && npm run plugin:web && npm run plugin:chinese && npm run plugin:compare && npm run plugin:ask",
+    "plugins:dev-install": "npm run plugin:voice:dev-install && npm run plugin:translate:dev-install && npm run plugin:web:dev-install && npm run plugin:chinese:dev-install && npm run plugin:compare:dev-install && npm run plugin:ask:dev-install"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",

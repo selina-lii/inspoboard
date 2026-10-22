@@ -1,5 +1,8 @@
 //! Commands that the frontend can call. Each command is a thin wrapper.
 //! The logic is in vault_fs, vault_lock, vault_watch, and history.
+//! - A command without "async" runs on the main thread: the window does not respond while it runs. Writes stay
+//!   there (their order is the order of the calls). Reads, history, backups, and imports are "async" (other threads).
+//! - Slow commands and errors go into the session log (debug_log.rs).
 
 use std::collections::HashMap;
 use std::fs;
@@ -40,6 +43,8 @@ fn check_allowed(root: &std::path::Path) -> Result<(), String> {
 
 pub struct OpenVault {
     root: PathBuf,
+    /// The label of the window that shows the vault ("" if not known: a vault opened again by a command).
+    window: String,
     read_only: bool,
     known: Arc<Mutex<KnownFiles>>,
     // Dropping these releases the lock and stops the watcher.
@@ -47,9 +52,36 @@ pub struct OpenVault {
     _watcher: VaultWatcher,
 }
 
+/// The open vaults, by folder. Each window shows one vault, and a vault shows in one window only.
+pub type Vaults = HashMap<PathBuf, OpenVault>;
+
 #[derive(Default)]
 pub struct AppState {
-    vault: Mutex<Option<OpenVault>>,
+    vault: Mutex<Vaults>,
+}
+
+impl AppState {
+    /// The saved PDF of a link object (`web/<key>.pdf`) in the vault of a window (or the only open vault).
+    pub fn web_pdf(&self, window: &str, key: &str) -> Option<PathBuf> {
+        let relative = format!("web/{key}.pdf");
+        let (folder, name) = web_path(&relative)?;
+        let vaults = self.vault.lock().ok()?;
+        let vault = vaults.values().find(|vault| vault.window == window).or_else(|| (vaults.len() == 1).then(|| vaults.values().next()).flatten())?;
+        Some(vault.root.join(folder).join(name))
+    }
+
+    /// Closes the vaults of a window (this releases their locks). For a window that closes.
+    pub fn close_window(&self, window: &str) {
+        if let Ok(mut vaults) = self.vault.lock() {
+            vaults.retain(|_, vault| vault.window != window);
+        }
+    }
+
+    /// The window that shows a vault, if one does.
+    fn window_of(&self, root: &Path) -> Option<String> {
+        let vaults = self.vault.lock().ok()?;
+        vaults.get(root).map(|vault| vault.window.clone()).filter(|window| !window.is_empty())
+    }
 }
 
 #[derive(serde::Serialize)]
@@ -69,9 +101,13 @@ pub struct FileWrite {
     content: Option<String>,
 }
 
-/// Opens a vault into the slot. Closes the old vault first (this releases its lock).
-fn open_into(app: &AppHandle, slot: &mut Option<OpenVault>, root: &Path) -> Result<vault_fs::VaultRead, String> {
-    *slot = None;
+/// Opens a vault for a window. Closes the old vault of the window first, and the vault if it is open (this releases
+/// their locks).
+fn open_into(app: &AppHandle, slot: &mut Vaults, root: &Path, window: &str) -> Result<vault_fs::VaultRead, String> {
+    if !window.is_empty() {
+        slot.retain(|_, vault| vault.window != window);
+    }
+    slot.remove(root);
     let lock = vault_lock::try_acquire(root)?;
     let read = vault_fs::read_vault(root)?;
     let known = Arc::new(Mutex::new(KnownFiles::default()));
@@ -83,7 +119,9 @@ fn open_into(app: &AppHandle, slot: &mut Option<OpenVault>, root: &Path) -> Resu
     }
     let watcher = vault_watch::start(app.clone(), root.to_path_buf(), known.clone())?;
     let read_only = lock.is_none();
-    *slot = Some(OpenVault { root: root.to_path_buf(), read_only, known, _lock: lock, _watcher: watcher });
+    crate::debug_log::start(root);
+    crate::debug_log::write("vault", &format!("Opened: {} files, {} unreadable, read-only: {read_only}.", read.files.len(), read.unreadable.len()));
+    slot.insert(root.to_path_buf(), OpenVault { root: root.to_path_buf(), window: window.to_string(), read_only, known, _lock: lock, _watcher: watcher });
     Ok(read)
 }
 
@@ -99,20 +137,26 @@ fn vault_root(path: &str) -> Result<PathBuf, String> {
 
 /// The open vault for `root`. If the backend has no vault open, or a different one, it opens `root` again.
 /// Thus a command never fails only because the backend lost its open vault.
-fn ensure_open<'a>(app: &AppHandle, slot: &'a mut Option<OpenVault>, root: &str) -> Result<&'a OpenVault, String> {
+fn ensure_open<'a>(app: &AppHandle, slot: &'a mut Vaults, root: &str) -> Result<&'a OpenVault, String> {
     let root = vault_root(root)?;
-    if slot.as_ref().is_none_or(|vault| vault.root != root) {
-        open_into(app, slot, &root)?;
+    if !slot.contains_key(&root) {
+        open_into(app, slot, &root, "")?;
     }
-    slot.as_ref().ok_or_else(|| "The vault could not be opened.".to_string())
+    slot.get(&root).ok_or_else(|| "The vault could not be opened.".to_string())
 }
 
+/// The error of `open_vault` for a vault that a different window shows (that window comes to the front).
+pub const OPEN_ELSEWHERE: &str = "This vault is open in a different window.";
+
 #[tauri::command]
-pub fn open_vault(app: AppHandle, state: State<'_, AppState>, path: String) -> Result<OpenedVault, String> {
+pub fn open_vault(app: AppHandle, window: tauri::Window, state: State<'_, AppState>, path: String) -> Result<OpenedVault, String> {
     let root = vault_root(&path)?;
+    if focus_other(&app, &state, &root, window.label()) {
+        return Err(OPEN_ELSEWHERE.to_string());
+    }
     let mut slot = state.vault.lock().map_err(|_| "Internal lock error.".to_string())?;
-    let read = open_into(&app, &mut slot, &root)?;
-    let locked_by_other = slot.as_ref().is_some_and(|vault| vault.read_only);
+    let read = open_into(&app, &mut slot, &root, window.label())?;
+    let locked_by_other = slot.get(&root).is_some_and(|vault| vault.read_only);
     Ok(OpenedVault {
         root: root.to_string_lossy().to_string(),
         locked_by_other,
@@ -121,10 +165,48 @@ pub fn open_vault(app: AppHandle, state: State<'_, AppState>, path: String) -> R
     })
 }
 
+/// If a window other than `window` shows the vault, that window comes to the front: true.
+fn focus_other(app: &AppHandle, state: &AppState, root: &Path, window: &str) -> bool {
+    let Some(other) = state.window_of(root).filter(|other| other != window) else { return false };
+    let Some(shown) = app.get_webview_window(&other) else { return false };
+    let _ = shown.unminimize();
+    let _ = shown.set_focus();
+    true
+}
+
+/// True if a different window shows the vault: that window comes to the front (the caller then does not open it).
 #[tauri::command]
-pub fn close_vault(state: State<'_, AppState>) -> Result<(), String> {
-    let mut slot = state.vault.lock().map_err(|_| "Internal lock error.".to_string())?;
-    *slot = None;
+pub fn focus_vault_window(app: AppHandle, window: tauri::Window, state: State<'_, AppState>, path: String) -> Result<bool, String> {
+    Ok(focus_other(&app, &state, &vault_root(&path)?, window.label()))
+}
+
+#[tauri::command]
+pub fn close_vault(window: tauri::Window, state: State<'_, AppState>) -> Result<(), String> {
+    state.close_window(window.label());
+    Ok(())
+}
+
+/// A new app window. `path`: the vault that it opens (else it asks for one). A vault that a window shows already
+/// does not open again: that window comes to the front.
+#[tauri::command]
+pub fn open_vault_window(app: AppHandle, state: State<'_, AppState>, path: Option<String>) -> Result<(), String> {
+    if let Some(path) = &path {
+        if focus_other(&app, &state, &vault_root(path)?, "") {
+            return Ok(());
+        }
+    }
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+    let label = format!("vault-{}", NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+    let preset = serde_json::to_string(&path).map_err(|error| error.to_string())?;
+    tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App("index.html".into()))
+        .title("Inspoboard")
+        .inner_size(1280.0, 800.0)
+        .min_inner_size(640.0, 400.0)
+        .background_color(tauri::window::Color(0x1c, 0x1c, 0x1e, 0xff))
+        // The window reads its vault at startup (App.tsx).
+        .initialization_script(format!(r"window.__INSPOBOARD_VAULT__ = {preset};"))
+        .build()
+        .map_err(|error| format!("New window: {error}"))?;
     Ok(())
 }
 
@@ -136,38 +218,41 @@ pub fn write_files(app: AppHandle, state: State<'_, AppState>, root: String, wri
     if vault.read_only {
         return Err("The vault is read-only: a different Inspoboard window has it open.".to_string());
     }
-    for write in writes {
-        match &write.content {
-            Some(content) => vault_fs::write_atomic(&vault.root, &write.path, content)?,
-            None => vault_fs::move_to_trash(&vault.root, &write.path)?,
+    let count = writes.len();
+    crate::debug_log::timed("vault", &format!("Write {count} files"), 300, || {
+        for write in writes {
+            match &write.content {
+                Some(content) => vault_fs::write_atomic(&vault.root, &write.path, content)?,
+                None => vault_fs::move_to_trash(&vault.root, &write.path)?,
+            }
+            if let Ok(mut known) = vault.known.lock() {
+                known.set(&write.path, write.content.as_deref().map(str::as_bytes));
+            }
         }
-        if let Ok(mut known) = vault.known.lock() {
-            known.set(&write.path, write.content.as_deref().map(str::as_bytes));
-        }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn snapshot(app: AppHandle, state: State<'_, AppState>, root: String, message: String) -> Result<Option<String>, String> {
     let mut slot = state.vault.lock().map_err(|_| "Internal lock error.".to_string())?;
     let vault = ensure_open(&app, &mut slot, &root)?;
     if vault.read_only {
         return Ok(None);
     }
-    history::snapshot(&vault.root, &message)
+    crate::debug_log::timed("vault", "History snapshot", 500, || history::snapshot(&vault.root, &message))
 }
 
 /// Copies the vault data into `<vault>/.backup/<time>/` (see backup.rs).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn backup_vault(app: AppHandle, state: State<'_, AppState>, root: String) -> Result<crate::backup::BackupInfo, String> {
     let mut slot = state.vault.lock().map_err(|_| "Internal lock error.".to_string())?;
     let vault = ensure_open(&app, &mut slot, &root)?;
-    crate::backup::backup(&vault.root)
+    crate::debug_log::timed("vault", "Backup", 0, || crate::backup::backup(&vault.root))
 }
 
 /// The backups of the vault (backup menu), the newest first.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_backups(app: AppHandle, state: State<'_, AppState>, root: String) -> Result<Vec<crate::backup::BackupEntry>, String> {
     let mut slot = state.vault.lock().map_err(|_| "Internal lock error.".to_string())?;
     let vault = ensure_open(&app, &mut slot, &root)?;
@@ -175,7 +260,7 @@ pub fn list_backups(app: AppHandle, state: State<'_, AppState>, root: String) ->
 }
 
 /// Deletes one backup for good (the user confirmed in the app).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_backup(app: AppHandle, state: State<'_, AppState>, root: String, name: String) -> Result<(), String> {
     let mut slot = state.vault.lock().map_err(|_| "Internal lock error.".to_string())?;
     let vault = ensure_open(&app, &mut slot, &root)?;
@@ -185,7 +270,7 @@ pub fn delete_backup(app: AppHandle, state: State<'_, AppState>, root: String, n
     crate::backup::delete(&vault.root, &name)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_snapshots(app: AppHandle, state: State<'_, AppState>, root: String, limit: usize) -> Result<Vec<SnapshotInfo>, String> {
     let mut slot = state.vault.lock().map_err(|_| "Internal lock error.".to_string())?;
     let vault = ensure_open(&app, &mut slot, &root)?;
@@ -245,7 +330,7 @@ pub fn image_name(source: &Path, bytes: &[u8]) -> Result<String, String> {
 }
 
 /// Copies an image file into `images/` of the vault. Returns its vault path, for example "images/sky-1a2b….png".
-#[tauri::command]
+#[tauri::command(async)]
 pub fn import_image(app: AppHandle, state: State<'_, AppState>, root: String, source: String) -> Result<String, String> {
     let mut slot = state.vault.lock().map_err(|_| "Internal lock error.".to_string())?;
     let vault = ensure_open(&app, &mut slot, &root)?;
@@ -297,8 +382,48 @@ pub fn save_image_bytes(app: AppHandle, state: State<'_, AppState>, request: tau
     store_image(&vault.root, &source, bytes)
 }
 
-/// The bytes of an image in the vault.
+/// Saves the images on the system clipboard into `images/` of the vault. Returns their vault paths (empty if the
+/// clipboard has no image). Files that are not PNG, JPEG, GIF, or WebP are left out; TIFF data becomes PNG.
 #[tauri::command]
+pub fn paste_images(app: AppHandle, state: State<'_, AppState>, root: String) -> Result<Vec<String>, String> {
+    let clips = crate::clipboard::images();
+    if clips.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut slot = state.vault.lock().map_err(|_| "Internal lock error.".to_string())?;
+    let vault = ensure_open(&app, &mut slot, &root)?;
+    if vault.read_only {
+        return Err("The vault is read-only: a different Inspoboard window has it open.".to_string());
+    }
+    let mut paths = Vec::new();
+    for clip in clips {
+        match clip {
+            crate::clipboard::ClipImage::File(source) => {
+                let extension = source.extension().map(|value| value.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+                if !IMAGE_EXTENSIONS.contains(&extension.as_str()) {
+                    continue;
+                }
+                let size = fs::metadata(&source).map_err(|error| vault_fs::describe(&source, error))?.len();
+                if size > MAX_IMAGE_BYTES {
+                    return Err("The image is larger than 50 MB.".to_string());
+                }
+                let bytes = fs::read(&source).map_err(|error| vault_fs::describe(&source, error))?;
+                paths.push(store_image(&vault.root, &source, &bytes)?);
+            }
+            crate::clipboard::ClipImage::Bytes(bytes, extension) => {
+                let (bytes, extension) = if extension == "tiff" { (crate::clipboard::tiff_to_png(&bytes)?, "png") } else { (bytes, extension) };
+                if bytes.len() as u64 > MAX_IMAGE_BYTES {
+                    return Err("The image is larger than 50 MB.".to_string());
+                }
+                paths.push(store_image(&vault.root, Path::new(&format!("pasted.{extension}")), &bytes)?);
+            }
+        }
+    }
+    Ok(paths)
+}
+
+/// The bytes of an image in the vault.
+#[tauri::command(async)]
 pub fn read_image(app: AppHandle, state: State<'_, AppState>, root: String, path: String) -> Result<tauri::ipc::Response, String> {
     let name = image_path(&path).ok_or_else(|| format!("\"{path}\" is not an image of the vault."))?;
     let mut slot = state.vault.lock().map_err(|_| "Internal lock error.".to_string())?;
@@ -315,11 +440,18 @@ const MAX_WEB_BYTES: usize = 60 * 1024 * 1024;
 
 /// Marks (highlights and scribbles) of an item: `marks/<item id>.json`. The item text never changes for them.
 const MARKS_FOLDER: &str = "marks";
+/// In the app folder of the vault: not vault data, not in the history or backups.
+const FORMULA_CACHE_FOLDER: &str = ".inspoboard/cache/formulas";
 
 /// A safe vault path for a web file or a marks file: (folder, file name). Other paths give None.
 /// - `web/<key>.html`, `web/<key>.pdf`, `web/<key>.notes.json` (key: 24 hex digits)
 /// - `marks/<item id>.json` (item id: 12 lowercase letters or digits)
 pub fn web_path(relative: &str) -> Option<(&'static str, &str)> {
+    // The formulas found in a PDF (a cache: the app makes it again when it is missing).
+    if let Some(name) = relative.strip_prefix("cache/formulas/") {
+        let key = name.strip_suffix(".json")?;
+        return is_web_key(key).then_some((FORMULA_CACHE_FOLDER, name));
+    }
     if let Some(name) = relative.strip_prefix("marks/") {
         let id = name.strip_suffix(".json")?;
         let valid = id.len() == 12 && id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit());
@@ -338,8 +470,56 @@ fn is_web_key(key: &str) -> bool {
     hash || id
 }
 
+/// The files of an item that a copy takes along (SPEC 7.16): its saved web page or PDF, their notes, and its marks.
+fn item_files(key: &str) -> [String; 4] {
+    [format!("web/{key}.html"), format!("web/{key}.pdf"), format!("web/{key}.notes.json"), format!("marks/{key}.json")]
+}
+
+/// The size in bytes of the files of these items (missing files count 0). For the scope of a processing map.
+#[tauri::command(async)]
+pub fn item_files_size(app: AppHandle, state: State<'_, AppState>, root: String, keys: Vec<String>) -> Result<u64, String> {
+    let mut slot = state.vault.lock().map_err(|_| "Internal lock error.".to_string())?;
+    let vault = ensure_open(&app, &mut slot, &root)?;
+    let mut total = 0;
+    for key in &keys {
+        for path in item_files(key) {
+            if let Some((folder, name)) = web_path(&path) {
+                total += fs::metadata(vault.root.join(folder).join(name)).map(|meta| meta.len()).unwrap_or(0);
+            }
+        }
+    }
+    Ok(total)
+}
+
+/// Copies the files of item `from` to item `to` (a copy of it). Files that are not there are left out. Returns the
+/// number of files copied. Each file: a temporary file, then a rename.
+#[tauri::command(async)]
+pub fn copy_item_files(app: AppHandle, state: State<'_, AppState>, root: String, from: String, to: String) -> Result<u32, String> {
+    let mut slot = state.vault.lock().map_err(|_| "Internal lock error.".to_string())?;
+    let vault = ensure_open(&app, &mut slot, &root)?;
+    if vault.read_only {
+        return Err("The vault is read-only: a different Inspoboard window has it open.".to_string());
+    }
+    let mut copied = 0;
+    for (source, target) in item_files(&from).iter().zip(item_files(&to)) {
+        let (Some((folder, name)), Some((_, target_name))) = (web_path(source), web_path(&target)) else {
+            return Err(format!("\"{from}\" or \"{to}\" is not an item key."));
+        };
+        let folder = vault.root.join(folder);
+        let file = folder.join(name);
+        if !file.exists() {
+            continue;
+        }
+        let temporary = folder.join(format!(".{target_name}.tmp-{}", std::process::id()));
+        fs::copy(&file, &temporary).map_err(|error| vault_fs::describe(&file, error))?;
+        fs::rename(&temporary, folder.join(target_name)).map_err(|error| vault_fs::describe(&temporary, error))?;
+        copied += 1;
+    }
+    Ok(copied)
+}
+
 /// A saved web page or its notes, or None if the file is not there.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn read_web_file(app: AppHandle, state: State<'_, AppState>, root: String, path: String) -> Result<Option<String>, String> {
     let (folder, name) = web_path(&path).ok_or_else(|| format!("\"{path}\" is not a web or marks file of the vault."))?;
     let mut slot = state.vault.lock().map_err(|_| "Internal lock error.".to_string())?;
@@ -373,7 +553,7 @@ pub fn write_web_file(app: AppHandle, state: State<'_, AppState>, root: String, 
 }
 
 /// The bytes of a saved web file (a PDF). An error if the file is not there.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn read_web_bytes(app: AppHandle, state: State<'_, AppState>, root: String, path: String) -> Result<tauri::ipc::Response, String> {
     let (folder, name) = web_path(&path).ok_or_else(|| format!("\"{path}\" is not a web file of the vault."))?;
     let mut slot = state.vault.lock().map_err(|_| "Internal lock error.".to_string())?;
@@ -409,7 +589,7 @@ pub fn write_web_bytes(app: AppHandle, state: State<'_, AppState>, request: taur
 
 /// Copies a PDF file (from a file dialog) into the vault: `web/<key>.pdf`. The key comes from the content:
 /// the same file gives the same key. Returns the key.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn import_pdf(app: AppHandle, state: State<'_, AppState>, root: String, source: String, key: Option<String>) -> Result<String, String> {
     use std::hash::{Hash, Hasher};
     let source = local_path(&source)?;
@@ -565,7 +745,7 @@ const MAX_BUNDLE_TEXT_BYTES: u64 = 20 * 1024 * 1024;
 
 /// Writes a board bundle into a NEW folder in `parent` (an existing folder is never written into: the name gets
 /// " 2", " 3", ...). `files`: bundle text files. `images`: vault images ("images/<name>") to copy. Returns the folder.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn export_bundle(app: AppHandle, state: State<'_, AppState>, root: String, parent: String, name: String, files: HashMap<String, String>, images: Vec<String>) -> Result<String, String> {
     let parent = PathBuf::from(&parent);
     if !parent.is_absolute() || !parent.is_dir() {
@@ -623,7 +803,7 @@ pub struct BundleFiles {
 }
 
 /// Reads the board data of a bundle folder. It changes nothing.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn read_bundle(folder: String) -> Result<BundleFiles, String> {
     let folder = PathBuf::from(&folder);
     if !folder.is_absolute() || !folder.join("vault.json").is_file() {
@@ -662,7 +842,7 @@ pub fn read_bundle(folder: String) -> Result<BundleFiles, String> {
 
 /// Copies the images of a bundle into `images/` of the vault (an existing image is never written again).
 /// Returns bundle path -> vault path.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn import_bundle_images(app: AppHandle, state: State<'_, AppState>, root: String, folder: String, images: Vec<String>) -> Result<HashMap<String, String>, String> {
     let folder = PathBuf::from(&folder);
     let mut slot = state.vault.lock().map_err(|_| "Internal lock error.".to_string())?;
@@ -726,6 +906,12 @@ mod tests {
     }
 
     #[test]
+    fn item_files_are_safe_paths_only_for_item_keys() {
+        assert!(item_files("a1b2c3d4e5f6").iter().all(|path| web_path(path).is_some()));
+        assert!(item_files("../a1b2c3d4").iter().all(|path| web_path(path).is_none()));
+    }
+
+    #[test]
     fn web_paths_stay_in_the_web_folder() {
         assert_eq!(web_path("web/0123456789abcdef01234567.html"), Some(("web", "0123456789abcdef01234567.html")));
         assert!(web_path("web/0123456789abcdef01234567.pdf").is_some());
@@ -733,6 +919,8 @@ mod tests {
         assert_eq!(web_path("marks/../items.json"), None);
         assert_eq!(web_path("marks/A1B2C3D4E5F6.json"), None);
         assert!(web_path("web/0123456789abcdef01234567.notes.json").is_some());
+        assert_eq!(web_path("cache/formulas/a1b2c3d4e5f6.json"), Some((".inspoboard/cache/formulas", "a1b2c3d4e5f6.json")));
+        assert_eq!(web_path("cache/formulas/../x.json"), None);
         // The copy of a link object: its item ID.
         assert_eq!(web_path("web/a1b2c3d4e5f6.html"), Some(("web", "a1b2c3d4e5f6.html")));
         assert!(web_path("web/a1b2c3d4e5f6.notes.json").is_some());

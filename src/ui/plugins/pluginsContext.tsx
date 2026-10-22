@@ -53,7 +53,7 @@ export type PluginsValue = {
    * Transforms a list of texts that are not items (for example the paragraphs of a saved web page), in parts.
    * `onPart` gets each part as it comes. Progress and Cancel show as for items. Returns false if it stopped early.
    */
-  transformList(plugin: string, texts: readonly string[], onPart: (start: number, results: string[]) => void): Promise<boolean>;
+  transformList(plugin: string, texts: readonly string[], onPart: (start: number, results: string[], partial?: boolean) => void): Promise<boolean>;
   /** A long call with progress in `job`. An error goes to `error` (and undefined returns), or with `throws` to the caller. */
   callWithProgress(plugin: string, method: string, params: unknown, throws?: boolean): Promise<unknown>;
   setError(error: string | null): void;
@@ -134,7 +134,7 @@ export function PluginsProvider({ children }: { children: ReactNode }) {
   /** The running transform call: the texts of the call get partial results from progress notes. */
   const currentCall = useRef<{ plugin: string; optionsKey: string; slots: { id: Id; field: "title" | "body" }[]; sources: string[] } | null>(null);
   /** The running list call (transformList): each finished text of the call shows at once. */
-  const listCall = useRef<{ plugin: string; start: number; onPart(start: number, results: string[]): void } | null>(null);
+  const listCall = useRef<{ plugin: string; start: number; onPart(start: number, results: string[], partial?: boolean): void } | null>(null);
   /** Texts done before the current plugin call. Progress notes count inside the call. */
   const base = useRef(0);
 
@@ -181,11 +181,11 @@ export function PluginsProvider({ children }: { children: ReactNode }) {
       const list = listCall.current;
       // A partial result has the markers of "Do not translate": give the parts back.
       if (progress.partial !== null) progress.partial.text = restoreText(progress.partial.text, protectedParts.current.get(plugin)?.[progress.partial.index] ?? []);
-      if (progress.partial !== null && list !== null && list.plugin === plugin) list.onPart(list.start + progress.partial.index, [progress.partial.text]);
+      if (progress.partial !== null && list !== null && list.plugin === plugin) list.onPart(list.start + progress.partial.index, [progress.partial.text], true);
       if (progress.partial !== null && call !== null && call.plugin === plugin) {
         const slot = call.slots[progress.partial.index];
         const text = progress.partial.text;
-        if (slot !== undefined) setOverlay((current) => withResults(current, plugin, call.optionsKey, [slot], [text], [call.sources[progress.partial!.index]!]));
+        if (slot !== undefined) setOverlay((current) => withResults(current, plugin, call.optionsKey, [slot], [text], [call.sources[progress.partial!.index]!], true));
       }
       setJob((current) =>
         current === null || current.plugin !== plugin
@@ -294,7 +294,7 @@ export function PluginsProvider({ children }: { children: ReactNode }) {
   );
 
   const transformList = useCallback(
-    async (plugin: string, texts: readonly string[], onPart: (start: number, results: string[]) => void) => {
+    async (plugin: string, texts: readonly string[], onPart: (start: number, results: string[], partial?: boolean) => void) => {
       if (host === null || job !== null) return false;
       cancelled.current = false;
       setError(null);

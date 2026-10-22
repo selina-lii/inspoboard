@@ -2,58 +2,62 @@
 // Layout: top bar, tool bar, then the board (2D), the galaxy (3D), or the full text page.
 // Item text opens in floating windows above the view.
 
-import { ArrowLeft, ArrowRight, Box, Link2, Check, Ellipsis, Columns2, Dot, Minimize2, ScrollText, ListChecks, LoaderCircle, Lock, Plus, Redo2, Settings, Square, Trash2, TriangleAlert, Undo2 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Box, Columns2, Minimize2, ScrollText, Plus, Square } from "lucide-react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isComposing } from "./keys";
-import { collapseAll, createItemOnBoard, createRelation, DEFAULT_SIZE, placeRecord, renameItem, writeText } from "../../core/actions";
+import { collapseAll, createItemOnBoard, createRelation, DEFAULT_SIZE, placeRecord, rightOfCards, writeText } from "../../core/actions";
 import type { Command } from "../../core/commands";
 import { withTextLink } from "../../core/refs";
 import { boardOrder } from "../../core/outline";
 import type { SearchHit } from "../../core/search";
 import type { Id } from "../../core/types";
 import { BoardView, type BoardApi, type BoardSelection } from "../board/BoardView";
-import { forgetViewport } from "../board/viewports";
+import { forgetViewport, saveViewport } from "../board/viewports";
+import { captureView, restoreScrolls, type ViewSnapshot } from "./viewSnapshot";
 import { titleOf } from "../board/boardModel";
 import { ItemPicker, type PickResult } from "../dialogs/ItemPicker";
 import { SearchDialog } from "../dialogs/SearchDialog";
 import { SettingsDialog, type SettingsSection } from "../dialogs/SettingsDialog";
-import { GalaxyView } from "../galaxy/GalaxyView";
 import { PluginMenu } from "../plugins/PluginMenu";
 import { PluginsProvider } from "../plugins/pluginsContext";
 import { SpeechProvider } from "../plugins/speech";
 import { SpeechBar } from "../plugins/SpeechBar";
 import { SelectionTranslate } from "../plugins/SelectionTranslate";
-import { ReaderEndSlot, ReaderToolSlot, useWebPages, WebButton, WebOpener, WebPagesProvider, WebReaderLayer, WhenNoPage } from "../web/WebPages";
+import { ReaderToolSlot, WebOpener, WebPagesProvider, WebReaderLayer, WhenNoPage } from "../web/WebPages";
 import { FieldsDialog, type FieldsRequest } from "../dialogs/FieldsDialog";
-import { ActionItemsDialog } from "../dialogs/ActionItemsDialog";
+import { ItemsByKindDialog } from "../dialogs/ItemsByKindDialog";
 import { TrashDialog } from "../dialogs/TrashDialog";
-import { LinkBench, toggleBench } from "./LinkBench";
+import { RecentDialog } from "../dialogs/RecentDialog";
+import { TrayPanel } from "../plugins/tray/TrayPanel";
+import { LinkBench } from "./LinkBench";
+import { CompareBench } from "../plugins/compare/CompareBench";
 import { TOOL_MENUS, TOOLBAR_GROUPS, TOOLS, toolById, type ToolId } from "../tools/registry";
 import { ToolChoice } from "../tools/ToolChoice";
 import { EditorWindows, type EditorWindowState } from "../windows/EditorWindows";
 import { DocumentView } from "../windows/DocumentView";
 import { TextPage } from "../windows/TextPage";
+import type { PassageEnd } from "../../core/linkEnds";
 import { PageToolSlotContext } from "./pageToolSlot";
 import { Banners } from "./Banners";
 import { ColorManager } from "./ColorManager";
-import { Archive } from "lucide-react";
-import { BackupButton, useBackup } from "./BackupButton";
-import { ContextMenu, type MenuRequest } from "./ContextMenu";
-import { FOLDED_BUTTONS } from "./zen";
-import { ZenIcon } from "./ZenIcon";
 import { PenColors } from "../board/PenColors";
 import { ContextBar } from "./ContextBar";
+import { TopBar } from "./TopBar";
 import { ErrorBoundary } from "./ErrorBoundary";
-import { CommitField } from "./fields";
-import { useHistoryState, useRunCommand, useSession, useSessionState, useStoreRevision } from "./sessionContext";
-import { useNavigation, type Navigation, type View, type ViewMode } from "./navigation";
+import { logEvent } from "./debugLog";
+import { CommandScopeProvider, useRunCommand, useSession, useSessionState, useStoreRevision } from "./sessionContext";
+import { useNavigation, type View, type ViewMode } from "./navigation";
 import { useShortcuts } from "./shortcuts";
 import { JumpProvider, WorkspaceActionsProvider, type JumpRange, type JumpRequest, type WorkspaceActions } from "./workspaceActions";
 import { applyUiLanguage } from "../i18n/domTranslate";
 import { setBackendWords } from "../../io/backend";
-import { ThemeButton, useApplyTheme } from "./theme";
+import { useApplyTheme } from "./theme";
 import { isUiLanguage, translate } from "../i18n/i18n";
+import { useMapScope, useReleaseClosedCopies } from "../plugins/tray/autoCopies";
 import "../tools/tools.css";
+
+// The compare view (lab plugin) loads only when it opens.
+const CompareView = lazy(() => import("../plugins/compare/CompareView").then((module) => ({ default: module.CompareView })));
 
 const EMPTY_SELECTION: BoardSelection = { recordIds: [], placeIds: [], linkIds: [], outlineIds: [] };
 const WINDOW_SIZE = { w: 440, h: 380 };
@@ -66,12 +70,16 @@ type LinkPick = { sourceId: Id; label: string; from: number; to: number; returnT
 /** The longest quote of a target location. */
 const MAX_QUOTE = 160;
 
+// three.js is large: the galaxy (3D) loads when it first shows.
+const GalaxyView = lazy(() => import("../galaxy/GalaxyView").then((module) => ({ default: module.GalaxyView })));
+
 export function Workspace({ zenRequest = 0 }: { zenRequest?: number }) {
   const session = useSession();
   const state = useSessionState();
   const runCommand = useRunCommand();
   useStoreRevision();
-  const navigation = useNavigation(session.rootId);
+  // The view history keeps what shows at each step (windows, board view, scroll places): Back gives it again.
+  const navigation = useNavigation<ViewSnapshot>(session.rootId, () => captureView(windowsRef.current, boardApi.current));
   const { path, mode: viewMode } = navigation.view;
   const goTo = navigation.go;
   const setPath = useCallback((update: (current: Id[]) => Id[]) => goTo((view) => ({ ...view, path: update(view.path) })), [goTo]);
@@ -92,18 +100,28 @@ export function Workspace({ zenRequest = 0 }: { zenRequest?: number }) {
   const [showBoardFor, setShowBoardFor] = useState<Id | null>(null);
   /** The outline that shows as one continuous document, or null. */
   const [documentOf, setDocumentOf] = useState<Id | null>(null);
+  /** The two sides of the compare view (lab plugin), or null. */
+  const [comparing, setComparing] = useState<[PassageEnd, PassageEnd] | null>(null);
   const [windows, setWindows] = useState<EditorWindowState[]>([]);
+  const windowsRef = useRef(windows);
+  windowsRef.current = windows;
   const [picker, setPicker] = useState<PickerRequest | null>(null);
   const [actionItemsOpen, setActionItemsOpen] = useState(false);
   const [trashOpen, setTrashOpen] = useState(false);
+  const [recentOpen, setRecentOpen] = useState(false);
   const [fieldsRequest, setFieldsRequest] = useState<(FieldsRequest & { resolve(values: Record<string, string> | null): void }) | null>(null);
   /** Web pages: the provider is inside this component, so it gives its open function by a ref. */
   const openUrlRef = useRef<(url: string, read?: boolean, find?: string, itemId?: Id) => void>(() => undefined);
   const jumpRef = useRef<(url: string, itemId?: Id) => void>(() => undefined);
   const browserRef = useRef<(url: string) => void>(() => undefined);
+  /** True while a document shows: a text page, the document view of an outline, or the web page or PDF reader. */
+  const inDocument = useRef(false);
+  /** True while the reader shows a page (WebOpener sets it). */
+  const readerOpen = useRef(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [searchReplace, setSearchReplace] = useState(false);
   /** A search for a link target (link tool: right-click or "Search…"). It resolves with the chosen hit. */
-  const [targetSearch, setTargetSearch] = useState<{ resolve(result: { itemId: Id; quote?: string } | null): void } | null>(null);
+  const [targetSearch, setTargetSearch] = useState<{ title?: string; resolve(result: { itemId: Id; quote?: string } | null): void } | null>(null);
   /** The open Settings dialog, at this section (null: closed). */
   const [settingsOpen, setSettingsOpen] = useState<SettingsSection | null>(null);
   /** Zen mode: only the buttons in the setting "zenButtons" show, in a small floating bar. View > Zen Mode turns it on, Esc turns it off. */
@@ -128,9 +146,28 @@ export function Workspace({ zenRequest = 0 }: { zenRequest?: number }) {
   const [linkPick, setLinkPick] = useState<LinkPick | null>(null);
   const nonce = useRef(0);
   const boardId = path.at(-1)!;
+  // An item that shows as the full page has no small window too: the page takes the place of its window.
+  useEffect(() => {
+    if (windowsRef.current.some((window) => window.itemId === boardId)) setWindows((current) => current.filter((window) => window.itemId !== boardId));
+  }, [boardId]);
+  // Processing maps: an unchanged copy made for editing goes again when nothing shows it (SPEC 7.16).
+  useReleaseClosedCopies(session, runCommand, [...windows.map((window) => window.itemId), ...path]);
+  // The board area (the board, its tool bar parts): on a processing map, changes of reference cards change copies.
+  const mapScope = useMapScope(session, boardId);
   const boardIdRef = useRef(boardId);
   boardIdRef.current = boardId;
   const boardApi = useRef<BoardApi | null>(null);
+  // Back or forward: the windows, the board view, and the scroll places of that step come again.
+  useEffect(() => {
+    const snapshot = navigation.arrived?.snapshot;
+    if (snapshot === undefined) return;
+    setWindows(snapshot.windows);
+    if (snapshot.board !== null) {
+      saveViewport(snapshot.board.id, snapshot.board.viewport);
+      if (boardApi.current?.boardId === snapshot.board.id) boardApi.current.setViewport(snapshot.board.viewport);
+    }
+    restoreScrolls(snapshot.scrolls);
+  }, [navigation.arrived]);
 
   const openRecord = useCallback(
     (recordId: Id) => {
@@ -150,14 +187,15 @@ export function Workspace({ zenRequest = 0 }: { zenRequest?: number }) {
 
   /** Opens a board by its home path: root, ..., board. Used for references and links. */
   const openBoard = useCallback(
-    (targetBoardId: Id) => {
+    (targetBoardId: Id, newStep = false) => {
       forgetViewport(targetBoardId);
       session.markOpened(targetBoardId);
-      setPath(() => session.graph.homePath(session.rootId, targetBoardId));
+      // `newStep` (a jump): a step in the view history also on the same board, so Back comes back to here.
+      goTo((view) => ({ ...view, path: session.graph.homePath(session.rootId, targetBoardId) }), newStep);
       setSelection(EMPTY_SELECTION);
       setTool("select");
     },
-    [session, setPath],
+    [session, goTo],
   );
 
   /** Goes to a different chapter of the same board (previous or next page). */
@@ -185,10 +223,7 @@ export function Workspace({ zenRequest = 0 }: { zenRequest?: number }) {
   const createOnBoard = useCallback(
     (name: string): Id | null => {
       const board = boardIdRef.current;
-      const children = session.graph.childrenOf(board);
-      const right = children.length === 0 ? 0 : Math.max(...children.map((place) => place.x + place.w)) + 40;
-      const top = children.length === 0 ? 0 : Math.min(...children.map((place) => place.y));
-      const { command, itemId } = createItemOnBoard(session.context, { boardId: board, view: "note", x: right, y: top, name });
+      const { command, itemId } = createItemOnBoard(session.context, { boardId: board, view: "note", ...rightOfCards(session, board), name });
       return runCommand(command) ? itemId : null;
     },
     [session, runCommand],
@@ -212,11 +247,22 @@ export function Workspace({ zenRequest = 0 }: { zenRequest?: number }) {
       const range = rangeOf(body, target);
       const home = session.graph.homeOf(itemId);
       nonce.current += 1;
+      // A jump is a step in the view history: Back gives the view before it (its windows and scroll places too).
       if (session.graph.isBoardItem(itemId)) {
-        openBoard(itemId);
+        openBoard(itemId, true);
         return;
       }
-      if (home !== undefined) openBoard(home.from);
+      // From a document, a jump keeps the document: the item opens in a window over it. A double-click on the window
+      // bar opens the item as a full page (SPEC 7.11).
+      if (inDocument.current || readerOpen.current) {
+        goTo((view) => view, true);
+        // The open page itself: only its text scrolls to the passage.
+        if (itemId !== boardIdRef.current) openText(itemId);
+        if (range !== null) setJump({ itemId, ...range, nonce: nonce.current });
+        return;
+      }
+      if (home !== undefined) openBoard(home.from, true);
+      else goTo((view) => view, true);
       if (home?.view === "note") {
         setFocus({ recordId: itemId, quote: range === null ? null : body.slice(range.from, range.to), nonce: nonce.current });
         return;
@@ -225,7 +271,18 @@ export function Workspace({ zenRequest = 0 }: { zenRequest?: number }) {
       openText(itemId);
       if (range !== null) setJump({ itemId, ...range, nonce: nonce.current });
     },
-    [session, openBoard, openText],
+    [session, openBoard, openText, goTo],
+  );
+
+  const showLocation = useCallback(
+    (itemId: Id) => {
+      const home = session.graph.homeOf(itemId);
+      if (home === undefined) return;
+      nonce.current += 1;
+      openBoard(home.from, true);
+      setFocus({ recordId: itemId, quote: null, nonce: nonce.current });
+    },
+    [session, openBoard],
   );
 
   const followLink = useCallback(
@@ -257,10 +314,7 @@ export function Workspace({ zenRequest = 0 }: { zenRequest?: number }) {
       }
       // A new page on the board of the source, to the right of its cards.
       const board = session.graph.homeOf(input.sourceId)?.from ?? boardIdRef.current;
-      const children = session.graph.childrenOf(board);
-      const x = children.length === 0 ? 0 : Math.max(...children.map((place) => place.x + place.w)) + 40;
-      const y = children.length === 0 ? 0 : Math.min(...children.map((place) => place.y));
-      const created = createItemOnBoard(session.context, { boardId: board, view: "page", x, y, name: input.label });
+      const created = createItemOnBoard(session.context, { boardId: board, view: "page", ...rightOfCards(session, board), name: input.label });
       const relation = createRelation(session.context, { from: input.sourceId, to: created.itemId });
       const command: Command = { label: "Create link to new page", ops: [...created.command.ops, ...relation.command.ops] };
       if (runCommand(command)) wrapSource(input.sourceId, input.label, input.from, input.to, relation.linkId);
@@ -308,11 +362,11 @@ export function Workspace({ zenRequest = 0 }: { zenRequest?: number }) {
   const actions = useMemo<WorkspaceActions>(
     () => ({
       openRecord,
-      openBoard,
+      openBoard: (targetBoardId: Id) => openBoard(targetBoardId),
       openText,
       nameOf: (recordId) => titleOf(session.store, recordId),
       pickItem: (options) => new Promise((resolve) => setPicker({ ...options, resolve })),
-      searchLinkTarget: () => new Promise((resolve) => setTargetSearch({ resolve })),
+      searchLinkTarget: (title) => new Promise((resolve) => setTargetSearch({ title, resolve })),
       searchTextLinkTarget: () => setSearchOpen(true),
       askFields: (request) => new Promise((resolve) => setFieldsRequest({ ...request, resolve })),
       openUrl: (url, read, find, itemId) => openUrlRef.current(url, read, find, itemId),
@@ -321,9 +375,17 @@ export function Workspace({ zenRequest = 0 }: { zenRequest?: number }) {
       createTextLink,
       followLink,
       openAt,
+      showLocation,
+      compare: (left, right) => setComparing([left, right]),
     }),
-    [openRecord, openBoard, openText, session, createTextLink, followLink, openAt],
+    [openRecord, openBoard, openText, session, createTextLink, followLink, openAt, showLocation],
   );
+
+  /** A card of this size, centered in the visible part of the board. */
+  const centeredBox = (size: { w: number; h: number }) => {
+    const center = boardApi.current?.viewCenter() ?? { x: 0, y: 0 };
+    return { x: Math.round(center.x - size.w / 2), y: Math.round(center.y - size.h / 2), ...size };
+  };
 
   const finishPick = (result: PickResult | null) => {
     if (picker === null) return;
@@ -337,11 +399,17 @@ export function Workspace({ zenRequest = 0 }: { zenRequest?: number }) {
    * A link object for a page that opens with none (SPEC 1.1: a saved copy belongs to a link object): a new link card
    * on the current board, at the center of the view. One undo step. Null if the vault is read-only.
    */
-  const makeLinkObject = (url: string, name: string): Id | null => {
+  const makeLinkObject = (url: string, name: string, existing: Id | null): Id | null => {
+    // The item of the address exists: a shadow of it on this board (if it has no card here yet), not a new item.
+    if (existing !== null) {
+      const board = boardIdRef.current;
+      const here = existing === board || session.graph.childrenOf(board).some((place) => place.to === existing);
+      if (!here && !session.getState().readOnly) runCommand(placeRecord(session.context, { boardId: board, recordId: existing, view: "weblink", ...centeredBox(DEFAULT_SIZE.weblink) }).command);
+      return existing;
+    }
     if (session.getState().readOnly) return null;
-    const center = boardApi.current?.viewCenter() ?? { x: 0, y: 0 };
-    const size = DEFAULT_SIZE.weblink;
-    const { command, itemId } = createItemOnBoard(session.context, { boardId: boardIdRef.current, view: "weblink", x: Math.round(center.x - size.w / 2), y: Math.round(center.y - size.h / 2), url, name });
+    const { x, y } = centeredBox(DEFAULT_SIZE.weblink);
+    const { command, itemId } = createItemOnBoard(session.context, { boardId: boardIdRef.current, view: "weblink", x, y, url, name });
     return runCommand(command) ? itemId : null;
   };
 
@@ -353,18 +421,7 @@ export function Workspace({ zenRequest = 0 }: { zenRequest?: number }) {
     if (itemId === null || itemId === board) return;
     // A new item from the picker is on the board already.
     if (session.graph.childrenOf(board).some((place) => place.to === itemId)) return;
-    const center = boardApi.current?.viewCenter() ?? { x: 0, y: 0 };
-    const size = DEFAULT_SIZE.note;
-    runCommand(
-      placeRecord(session.context, {
-        boardId: board,
-        recordId: itemId,
-        view: "note",
-        x: Math.round(center.x - size.w / 2),
-        y: Math.round(center.y - size.h / 2),
-        ...size,
-      }).command,
-    );
+    runCommand(placeRecord(session.context, { boardId: board, recordId: itemId, view: "note", ...centeredBox(DEFAULT_SIZE.note) }).command);
   };
 
   const openSearchHit = (hit: SearchHit, query: string) => {
@@ -394,6 +451,9 @@ export function Workspace({ zenRequest = 0 }: { zenRequest?: number }) {
   useEffect(() => setShowBoardFor(null), [boardId]);
   // An item with no children shows only its text. The root always shows its board.
   const textOnly = boardId !== session.rootId && !session.graph.isBoardItem(boardId) && showBoardFor !== boardId;
+  inDocument.current = textOnly || documentOf !== null;
+  // The session log: what is open (IDs only).
+  useEffect(() => logEvent(`View: ${documentOf !== null ? `document ${documentOf}` : textOnly ? `page ${boardId}` : `board ${boardId} (${viewMode})`}`), [boardId, textOnly, viewMode, documentOf]);
   // A document view belongs to the view where it opened. A new board closes it.
   useEffect(() => setDocumentOf(null), [path]);
   /** The outline that holds the open page on its parent board, if any. */
@@ -405,7 +465,10 @@ export function Workspace({ zenRequest = 0 }: { zenRequest?: number }) {
   // Shortcuts get stable functions. The ref always calls the newest version.
   const addItemRef = useRef(addItem);
   addItemRef.current = addItem;
-  const openSearch = useCallback(() => setSearchOpen(true), []);
+  const openSearch = useCallback((replace?: boolean) => {
+    setSearchReplace(replace === true);
+    setSearchOpen(true);
+  }, []);
   const addItemStable = useCallback(() => void addItemRef.current(), []);
   const collapseAllCards = useCallback(() => {
     runCommand(collapseAll(session.context, boardIdRef.current));
@@ -446,6 +509,7 @@ export function Workspace({ zenRequest = 0 }: { zenRequest?: number }) {
           onNavigate={(index) => setPath((current) => current.slice(0, index + 1))}
           onSearch={() => setSearchOpen(true)}
           onActionItems={() => setActionItemsOpen(true)}
+          onRecent={() => setRecentOpen(true)}
           onTrash={() => setTrashOpen(true)}
           onZen={() => setZen(true)}
           onSettings={(section) => setSettingsOpen(section ?? "appearance")}
@@ -506,7 +570,9 @@ export function Workspace({ zenRequest = 0 }: { zenRequest?: number }) {
           {shown("color") && !textOnly && viewMode === "2d" && (
             <>
               <span className="divider" />
-              <ColorManager boardId={boardId} placeIds={selection.placeIds} />
+              <CommandScopeProvider value={mapScope}>
+                <ColorManager boardId={boardId} placeIds={selection.placeIds} />
+              </CommandScopeProvider>
             </>
           )}
           <span className="divider" />
@@ -539,10 +605,8 @@ export function Workspace({ zenRequest = 0 }: { zenRequest?: number }) {
             <span className="divider" />
           </WhenNoPage>
           {shown("plugins") && <PluginMenu selectedIds={pluginSelection} boardItemIds={boardItemIds} scope={{ kind: textOnly ? "page" : "board", name: titleOf(session.store, boardId) }} />}
-          <WhenNoPage>{shown("selection") && viewMode === "2d" && !textOnly && <ContextBar selection={selection} />}</WhenNoPage>
+          <WhenNoPage>{shown("selection") && viewMode === "2d" && !textOnly && <CommandScopeProvider value={mapScope}><ContextBar selection={selection} /></CommandScopeProvider>}</WhenNoPage>
           {/* The end of the tool bar: "Save again from the web" (an open page) and "Read a web page or a PDF". */}
-          <ReaderEndSlot />
-          {shown("web") && <WebButton />}
         </nav>
         </div>
         <main className="board-area">
@@ -554,9 +618,12 @@ export function Workspace({ zenRequest = 0 }: { zenRequest?: number }) {
                 <TextPage itemId={boardId} parentId={path.at(-2) ?? null} onOpenSibling={openSibling} />
               </PageToolSlotContext.Provider>
             ) : viewMode === "3d" ? (
-              <GalaxyView boardId={boardId} />
+              <Suspense fallback={<div className="galaxy-loading muted">Opening the galaxy…</div>}>
+                <GalaxyView boardId={boardId} />
+              </Suspense>
             ) : (
-              <BoardView
+              <CommandScopeProvider value={mapScope}>
+                            <BoardView
                 boardId={boardId}
                 apiRef={boardApi}
                 tool={tool}
@@ -568,8 +635,10 @@ export function Workspace({ zenRequest = 0 }: { zenRequest?: number }) {
                 onPick={linkPick === null ? undefined : (recordId) => finishLinkPick(recordId)}
                 onOpenDocument={setDocumentOf}
               />
+              </CommandScopeProvider>
             )}
           </ErrorBoundary>
+          {!textOnly && documentOf === null && viewMode === "2d" && <TrayPanel boardId={boardId} viewCenter={() => boardApi.current?.viewCenter() ?? { x: 0, y: 0 }} />}
           {linkPick !== null && (
             <div className="pick-banner">
               <span>
@@ -596,6 +665,11 @@ export function Workspace({ zenRequest = 0 }: { zenRequest?: number }) {
           />
           </div>
           <WebReaderLayer />
+          {comparing !== null && (
+            <Suspense fallback={null}>
+              <CompareView left={comparing[0]} right={comparing[1]} onClose={() => setComparing(null)} />
+            </Suspense>
+          )}
           <SpeechBar />
           <SelectionTranslate />
           <Banners />
@@ -613,10 +687,10 @@ export function Workspace({ zenRequest = 0 }: { zenRequest?: number }) {
           }}
         />
       )}
-      <WebOpener openRef={openUrlRef} jumpRef={jumpRef} browserRef={browserRef} />
+      <WebOpener openRef={openUrlRef} jumpRef={jumpRef} browserRef={browserRef} openPageRef={readerOpen} />
       {settingsOpen !== null && <SettingsDialog section={settingsOpen} onClose={() => setSettingsOpen(null)} />}
       {actionItemsOpen && (
-        <ActionItemsDialog
+        <ItemsByKindDialog
           onOpen={(board, itemId) => {
             setActionItemsOpen(false);
             actions.openBoard(board, itemId);
@@ -625,6 +699,16 @@ export function Workspace({ zenRequest = 0 }: { zenRequest?: number }) {
         />
       )}
       <LinkBench />
+      <CompareBench />
+      {recentOpen && (
+        <RecentDialog
+          onOpen={(itemId) => {
+            setRecentOpen(false);
+            openAt(itemId);
+          }}
+          onClose={() => setRecentOpen(false)}
+        />
+      )}
       {trashOpen && (
         <TrashDialog
           boardId={boardId}
@@ -640,6 +724,8 @@ export function Workspace({ zenRequest = 0 }: { zenRequest?: number }) {
           // A link target can be on any board: the search covers all boards.
           boardId={linkPick !== null ? session.rootId : boardId}
           title={linkPick !== null ? "Link to… (search all boards)" : undefined}
+          pick={linkPick !== null}
+          replace={searchReplace}
           onOpen={openSearchHit}
           onClose={() => setSearchOpen(false)}
         />
@@ -647,7 +733,8 @@ export function Workspace({ zenRequest = 0 }: { zenRequest?: number }) {
       {targetSearch !== null && (
         <SearchDialog
           boardId={session.rootId}
-          title="Link to… (search all boards)"
+          title={targetSearch.title ?? "Link to… (search all boards)"}
+          pick
           onOpen={(hit, query) => {
             const link = session.store.get("links", hit.recordId);
             const itemId = link?.kind === "link" ? link.to : hit.recordId;
@@ -669,158 +756,6 @@ export function Workspace({ zenRequest = 0 }: { zenRequest?: number }) {
      </PluginsProvider>
      </JumpProvider>
     </WorkspaceActionsProvider>
-  );
-}
-
-type TopBarProps = { shown(id: string): boolean; pinned(id: string): boolean; zen: boolean; navigation: Navigation; path: Id[]; onNavigate(index: number): void; onSearch(): void; onActionItems(): void; onTrash(): void; onZen(): void; onSettings(section?: SettingsSection): void };
-
-function TopBar({ shown, pinned, zen, navigation, path, onNavigate, onSearch, onActionItems, onTrash, onZen, onSettings }: TopBarProps) {
-  const web = useWebPages();
-  const backup = useBackup();
-  // The backup menu, opened from "More" (when the backup button is not in the top bar).
-  const [backupsOpen, setBackupsOpen] = useState(false);
-  const [more, setMore] = useState<MenuRequest | null>(null);
-  // A press on ⋯ while the menu is open closes it (the menu closes on the press): the click must not open it again.
-  const moreClosed = useRef(0);
-  // The folded buttons: in the top bar if pinned (Settings › Top bar; in zen mode: the zen buttons), else in "More".
-  const folded = FOLDED_BUTTONS.filter((button) => !pinned(button.id));
-  const openMore = (element: HTMLElement) => {
-    const box = element.getBoundingClientRect();
-    const run: Record<string, () => void> = { actionItems: onActionItems, bench: toggleBench, trash: onTrash, backup: () => setBackupsOpen(true), zenOn: onZen };
-    const icons: Record<string, ReactNode> = {
-      actionItems: <ListChecks size={14} />,
-      bench: <Link2 size={14} />,
-      trash: <Trash2 size={14} />,
-      backup: <Archive size={14} />,
-      zenOn: <ZenIcon size={14} />,
-    };
-    const labels: Record<string, string> = {
-      actionItems: "Action items",
-      bench: "Link bench: show or hide",
-      trash: "Trash",
-      backup: "Backups…",
-      zenOn: "Zen mode (⌃⌘Z)",
-    };
-    setMore({
-      x: box.left,
-      y: box.bottom + 4,
-      entries: [
-        ...folded.map((button) => ({ label: labels[button.id]!, icon: icons[button.id], onSelect: run[button.id]! })),
-        { kind: "separator" as const },
-        { label: "Choose the top bar buttons…", icon: <Settings size={14} />, onSelect: () => onSettings("topBar") },
-      ],
-    });
-  };
-  const session = useSession();
-  const state = useSessionState();
-  const runCommand = useRunCommand();
-  const historyState = useHistoryState();
-  const [renaming, setRenaming] = useState(false);
-  const currentId = path.at(-1)!;
-  const status = state.readOnly
-    ? { icon: Lock, tip: `Read-only. ${state.readOnlyReason ?? ""}`, className: "error" }
-    : {
-        saved: { icon: Check, tip: "Saved", className: "" },
-        pending: { icon: Dot, tip: "Unsaved changes. They save in a moment.", className: "" },
-        saving: { icon: LoaderCircle, tip: "Saving…", className: "spin" },
-        error: { icon: TriangleAlert, tip: `Save failed: ${state.saveError ?? ""}`, className: "error" },
-      }[state.saveStatus];
-  return (
-    <header className="topbar">
-      {shown("back") && (
-      <button className="icon-button" data-tip="Back (⌘[)" data-tip-start disabled={!navigation.canBack} onClick={navigation.back}>
-        <ArrowLeft size={16} />
-      </button>)}
-      {shown("forward") && (
-      <button className="icon-button" data-tip="Forward (⌘])" disabled={!navigation.canForward} onClick={navigation.forward}>
-        <ArrowRight size={16} />
-      </button>)}
-      {pinned("actionItems") && (
-      <button className="icon-button" data-tip="Action items: all open ones" onClick={onActionItems}>
-        <ListChecks size={16} />
-      </button>)}
-      {pinned("bench") && (
-      <button className="icon-button" data-tip="Link bench: show or hide it" onClick={toggleBench}>
-        <Link2 size={16} />
-      </button>)}
-      {pinned("trash") && (
-      <button className="icon-button" data-tip="Trash: items deleted from all boards" onClick={onTrash}>
-        <Trash2 size={16} />
-      </button>)}
-      {shown("undo") && (
-      <button
-        className="icon-button"
-        data-tip={historyState.undoLabel ? `Undo ${historyState.undoLabel} (⌘Z)` : "Undo (⌘Z)"}
-        disabled={!historyState.canUndo}
-        onClick={() => session.history.undo()}
-      >
-        <Undo2 size={16} />
-      </button>)}
-      {shown("redo") && (
-      <button
-        className="icon-button"
-        data-tip={historyState.redoLabel ? `Redo ${historyState.redoLabel} (⇧⌘Z)` : "Redo (⇧⌘Z)"}
-        disabled={!historyState.canRedo}
-        onClick={() => session.history.redo()}
-      >
-        <Redo2 size={16} />
-      </button>)}
-      {shown("save") && (
-      <span className={`save-status icon-button ${status.className}`} data-tip={status.tip}>
-        <status.icon size={15} />
-      </span>)}
-      {pinned("backup") ? <BackupButton backup={backup} /> : <BackupButton backup={backup} button={false} open={backupsOpen} setOpen={setBackupsOpen} />}
-      {backup.status}
-      {shown("theme") && <ThemeButton />}
-      {/* Zen mode: only the buttons chosen in Settings show. Esc (or the button in the small bar) ends it. */}
-      {!zen && pinned("zenOn") && (
-      <button className="icon-button" data-tip="Zen mode: hide the bars (⌃⌘Z · Esc ends it)" onClick={onZen}>
-        <ZenIcon size={16} />
-      </button>)}
-      {!zen && folded.length > 0 && (
-      <button className={`icon-button${more !== null ? " active" : ""}`} data-tip="More: action items, link bench, trash, back up, zen mode" onClick={(event) => performance.now() - moreClosed.current > 300 && openMore(event.currentTarget)}>
-        <Ellipsis size={16} />
-      </button>)}
-      {more !== null && <ContextMenu request={more} onClose={() => ((moreClosed.current = performance.now()), setMore(null))} />}
-      {shown("settings") && (
-      <button className="icon-button" data-tip="Settings" onClick={() => onSettings()}>
-        <Settings size={16} />
-      </button>)}
-      <span className="divider" />
-      {shown("path") && <div className="breadcrumb">
-        {path.map((id, index) => {
-          const current = index === path.length - 1;
-          return (
-            <span key={`${id}-${index}`} style={{ display: "contents" }}>
-              {index > 0 && <span className="separator">/</span>}
-              {current && renaming ? (
-                <CommitField
-                  className="breadcrumb-input"
-                  value={session.store.get("items", id)?.name ?? ""}
-                  placeholder="Untitled"
-                  autoFocus
-                  onCommit={(name) => runCommand(renameItem(session.context, id, name.trim()))}
-                  onDone={() => setRenaming(false)}
-                />
-              ) : (
-                <button
-                  className={`${current ? "current" : ""}${session.store.get("items", id)?.codeName === true ? " code-name" : ""}`}
-                  data-tip={current ? "Double-click to rename" : "Go to this board"}
-                  onClick={() => {
-                    // An open web page or PDF closes: the board shows again (also its own board name).
-                    web?.close();
-                    onNavigate(index);
-                  }}
-                  onDoubleClick={() => current && !state.readOnly && session.store.has("items", currentId) && setRenaming(true)}
-                >
-                  {titleOf(session.store, id)}
-                </button>
-              )}
-            </span>
-          );
-        })}
-      </div>}
-    </header>
   );
 }
 

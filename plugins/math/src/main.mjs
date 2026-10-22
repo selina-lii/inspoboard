@@ -2,16 +2,15 @@
 // - Capability "math-text": method "math" gets formulas (LaTeX or MathML) and gives their words, for read-aloud.
 // - No network. It saves nothing.
 
-import { RULES } from "./rules.mjs";
 import { createInterface } from "node:readline";
-import { setup, speak, STYLES } from "./math.mjs";
+import { speak, stopHelper } from "./math.mjs";
 
 function info() {
   return {
     title: "Math to words",
     icon: "sigma",
-    description: "Read aloud says formulas as words (LaTeX in pages, formulas in web pages). Offline, English.",
-    options: [{ key: "style", label: "Formulas", default: "clearspeak", choices: STYLES }],
+    description: "Read aloud and the formula notes say formulas as words (LaTeX in pages, formulas in web pages and PDFs). Offline, English. MathJax and MathCAT.",
+    options: [],
     actions: [],
   };
 }
@@ -19,13 +18,15 @@ function info() {
 async function math(params) {
   const formulas = Array.isArray(params?.formulas) ? params.formulas : null;
   if (formulas === null) throw new Error('"formulas" is missing.');
-  await setup(params?.options?.style, RULES);
-  return { texts: formulas.map((formula) => (formula !== null && typeof formula === "object" ? speak(formula) : "")) };
+  const results = [];
+  for (const formula of formulas) results.push(formula !== null && typeof formula === "object" ? await speak(formula) : { speech: "", display: "" });
+  // `texts`: for speech. `display`: the same words for the screen (no sound spellings).
+  return { texts: results.map((result) => result.speech), display: results.map((result) => result.display) };
 }
 
 const send = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
 
-// One request at a time is enough: a call is fast (about 1 ms for each formula). Requests wait in order.
+// One request at a time is enough: a call is fast (some ms for each formula). Requests wait in order.
 let queue = Promise.resolve();
 const lines = createInterface({ input: process.stdin });
 lines.on("line", (line) => {
@@ -46,4 +47,4 @@ lines.on("line", (line) => {
   });
 });
 // When the app closes the input, stop.
-lines.on("close", () => void queue.then(() => process.exit(0)));
+lines.on("close", () => void queue.then(() => (stopHelper(), process.exit(0))));

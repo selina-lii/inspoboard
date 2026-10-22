@@ -23,7 +23,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self' ipc: http://ipc.localhost; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' blob:; worker-src 'self' blob:"
+      "csp": "default-src 'self' ipc: http://ipc.localhost; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: pdfpage: http://pdfpage.localhost; connect-src 'self' ipc: http://ipc.localhost pdfpage: http://pdfpage.localhost; font-src 'self' data:; media-src 'self' blob:; worker-src 'self' blob:"
     },
     "macOSPrivateApi": true
   },
@@ -36,6 +36,9 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "resources": {
+      "pdfium/": "pdfium/"
+    }
   }
 }

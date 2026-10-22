@@ -1,0 +1,252 @@
+<meta charset="utf-8">
+<title>Radial Graph Demo</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;600;700&family=JetBrains+Mono:wght@400&display=swap">
+<style>
+  /* Layout: one full-height stage (the board), a tool strip on top like the app's tool bar. */
+  :root {
+    --bg: #eef0f4; --board: #f7f8fb; --fg: #1d2230; --muted: #687087; --line: #d5d9e3; --panel: #ffffffd9;
+    --core: #ff8f8f; --core-edge: #f26d6d; --accent: #3b6cf0;
+    --display: "Figtree", system-ui, sans-serif; --mono: "JetBrains Mono", ui-monospace, monospace;
+  }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+    --bg: #15171c; --board: #1c1f26; --fg: #e8eaf0; --muted: #9097aa; --line: #2e333e; --panel: #23272fd9; --accent: #7aa0ff; color-scheme: dark } }
+  :root[data-theme="dark"] { --bg: #15171c; --board: #1c1f26; --fg: #e8eaf0; --muted: #9097aa; --line: #2e333e; --panel: #23272fd9; --accent: #7aa0ff; color-scheme: dark }
+  html, body { height: 100%; }
+  body { background: var(--bg); color: var(--fg); font-family: var(--display); display: flex; flex-direction: column; }
+  .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding-block: 10px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); border-bottom: 1px solid var(--line); }
+  .bar h1 { font-size: 15px; margin: 0; font-weight: 700; letter-spacing: 0.01em; }
+  .bar .group { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; background: transparent; color: var(--fg); padding: 5px 12px; font: inherit; font-size: 12px; cursor: pointer; }
+  .seg button.on { background: var(--accent); color: #fff; }
+  button.plain { border: 1px solid var(--line); background: var(--board); color: var(--fg); border-radius: 8px; padding: 5px 12px; font: inherit; font-size: 12px; cursor: pointer; }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  input[type="range"] { width: 110px; accent-color: var(--accent); }
+  input[type="text"] { font: inherit; font-size: 12px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--board); color: var(--fg); width: 150px; }
+  .num { font-family: var(--mono); font-variant-numeric: tabular-nums; min-width: 2.5ch; color: var(--fg); }
+  .stage { position: relative; flex: 1; min-height: 360px; background: var(--board); overflow: hidden; touch-action: none; }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: grab; }
+  canvas.dragging { cursor: grabbing; }
+  .hint { position: absolute; left: max(16px, env(safe-area-inset-left, 0px)); bottom: calc(14px + env(safe-area-inset-bottom, 0px)); max-width: 46ch; font-size: 12px; line-height: 1.5; color: var(--muted); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; backdrop-filter: blur(6px); }
+</style>
+
+<div class="bar">
+  <h1>Radial</h1>
+  <span class="seg" role="group" aria-label="View">
+    <button id="v2d" class="on">2D</button><button id="v3d">3D</button>
+  </span>
+  <label class="group" for="coreText">Core <input id="coreText" type="text" value="Spring trip" maxlength="40"></label>
+  <label class="group" for="count">Items <input id="count" type="range" min="4" max="48" value="18"><span class="num" id="countOut">18</span></label>
+  <label class="group" for="radius">Radius <input id="radius" type="range" min="140" max="420" value="260"><span class="num" id="radiusOut">260</span></label>
+  <button class="plain" id="explode">Explode again</button>
+  <button class="plain" id="add">Add a second radial</button>
+</div>
+<div class="stage" id="stage">
+  <canvas id="c"></canvas>
+  <div class="hint" id="hint">Drag a core: all its items move with it. Drag an item to place it by hand. Drag empty space to pan. In 3D, drag empty space to turn the ball.</div>
+</div>
+
+<script>
+(() => {
+  // Example items in the card kinds of the app (note, page, flashcard, quote, comment, URL, action item, media).
+  const KINDS = [
+    { kind: "Note", fill: "#ffd60a", text: "#2b2300" },
+    { kind: "Page", fill: "#f4f4f7", text: "#20242e", edge: "#c9ccd6" },
+    { kind: "Flashcard", fill: "#6495ed", text: "#ffffff" },
+    { kind: "Quote", fill: "#f4eed9", text: "#3b3a36", edge: "#e2d7b4" },
+    { kind: "Comment", fill: "#141218", text: "#ff2bd6", edge: "#ff2bd6" },
+    { kind: "URL", fill: "#0d2457", text: "#dbe6ff", edge: "#2f5fd0" },
+    { kind: "Action", fill: "#30d15899", text: "#0b2a14", edge: "#30d158" },
+    { kind: "Song", fill: "#bf5af2", text: "#ffffff" },
+  ];
+  const NAMES = ["Train tickets", "Kyoto inns", "Packing list", "Rain plan", "Temple hours", "Night market", "Budget", "Camera lens", "Day 1", "Day 2", "Day 3", "Tea house", "Bike rental", "Museum pass", "Gifts", "Phrasebook", "Maps offline", "Onsen", "Ramen spots", "Return flight", "Insurance", "Playlist", "Sakura forecast", "Hiking route", "Laundry", "Cash", "Adapters", "Photos", "Journal", "Postcards", "Snacks", "Ferry times", "Garden", "Ceramics", "Bookshop", "Bus pass", "Sunrise spot", "Lantern walk", "Sushi class", "Kimono", "Shrine", "Castle", "Market", "Bridge", "River walk", "Arcade", "Station locker", "Last day"];
+
+  const canvas = document.getElementById("c");
+  const stage = document.getElementById("stage");
+  const ctx = canvas.getContext("2d");
+  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let view = "2d";
+  let pan = { x: 0, y: 0 };
+  let rot = { yaw: 0.5, pitch: -0.35 };
+
+  // A seeded random, so "Explode again" gives a new but repeatable spread.
+  function rng(seed) { return () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; }; }
+
+  /**
+   * The layout of one radial: directions spread evenly over a sphere (Fibonacci points), each moved a little at random,
+   * and a distance from the core between 0.55 and 1 of the radius, so the items interleave instead of sitting on one shell.
+   * Offsets are relative to the core: moving the core moves them all.
+   */
+  function explode(radial, seed) {
+    const random = rng(seed);
+    const n = radial.items.length;
+    const golden = Math.PI * (3 - Math.sqrt(5));
+    radial.items.forEach((item, i) => {
+      const y = 1 - (2 * (i + 0.5)) / n;
+      const ring = Math.sqrt(1 - y * y);
+      const angle = i * golden + (random() - 0.5) * 0.9;
+      let dir = [Math.cos(angle) * ring, y + (random() - 0.5) * 0.25, Math.sin(angle) * ring];
+      const len = Math.hypot(...dir); dir = dir.map((v) => v / len);
+      const dist = radial.radius * (0.55 + random() * 0.45);
+      item.target = dir.map((v) => v * dist);
+      if (!item.offset) item.offset = [0, 0, 0];
+    });
+  }
+
+  function makeRadial(core, count, x, y, seed) {
+    const random = rng(seed * 7 + 3);
+    const items = Array.from({ length: count }, (_, i) => {
+      const look = KINDS[Math.floor(random() * KINDS.length)];
+      return { name: NAMES[(i + seed * 5) % NAMES.length], look, offset: [0, 0, 0], target: [0, 0, 0] };
+    });
+    const radial = { core, x, y, z: 0, radius: Number(radiusInput.value), items, seed };
+    explode(radial, seed);
+    return radial;
+  }
+
+  const coreInput = document.getElementById("coreText");
+  const countInput = document.getElementById("count");
+  const radiusInput = document.getElementById("radius");
+  let radials = [makeRadial(coreInput.value, Number(countInput.value), 0, 0, 1)];
+  let active = radials[0];
+
+  // 3D: turn the offset by the view rotation. 2D: the ball seen from the front (depth only orders and sizes).
+  function rotate([x, y, z]) {
+    if (view === "2d") return [x, y, z];
+    const cy = Math.cos(rot.yaw), sy = Math.sin(rot.yaw), cp = Math.cos(rot.pitch), sp = Math.sin(rot.pitch);
+    const x1 = x * cy + z * sy, z1 = -x * sy + z * cy;
+    const y1 = y * cp - z1 * sp, z2 = y * sp + z1 * cp;
+    return [x1, y1, z2];
+  }
+  function project(radial, offset) {
+    const [x, y, z] = rotate(offset);
+    const s = view === "3d" ? 700 / (700 + z) : 1;
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    return { x: w / 2 + pan.x + radial.x + x * s, y: h / 2 + pan.y + radial.y + y * s, z, s };
+  }
+
+  function roundRect(x, y, w, h, r) { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); }
+  function css(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+  let hitList = [];
+  function draw() {
+    const dpr = devicePixelRatio || 1;
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    if (canvas.width !== Math.round(w * dpr)) { canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr); }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    const lineColor = css("--line"), coreFill = css("--core"), coreEdge = css("--core-edge");
+    hitList = [];
+    const shapes = [];
+    for (const radial of radials) {
+      const core = project(radial, [0, 0, 0]);
+      for (const item of radial.items) {
+        // Ease each item toward its place (the explode animation).
+        for (let k = 0; k < 3; k += 1) item.offset[k] += (item.target[k] - item.offset[k]) * (reduced ? 1 : 0.12);
+        const p = project(radial, item.offset);
+        shapes.push({ type: "line", z: p.z - 1, from: core, to: p });
+        shapes.push({ type: "item", z: p.z, p, item, radial });
+      }
+      shapes.push({ type: "core", z: 0.5, p: core, radial });
+    }
+    // Far things first (3D); in 2D, lines under cards, cards under the core.
+    shapes.sort((a, b) => (view === "3d" ? b.z - a.z : (a.type === "line" ? -1 : a.type === "core" ? 1 : 0) - (b.type === "line" ? -1 : b.type === "core" ? 1 : 0)));
+    for (const shape of shapes) {
+      if (shape.type === "line") {
+        ctx.strokeStyle = lineColor; ctx.lineWidth = 1.2;
+        ctx.globalAlpha = view === "3d" ? Math.max(0.25, Math.min(1, shape.to.s)) : 0.9;
+        ctx.beginPath(); ctx.moveTo(shape.from.x, shape.from.y); ctx.lineTo(shape.to.x, shape.to.y); ctx.stroke();
+        ctx.globalAlpha = 1;
+      } else if (shape.type === "item") {
+        const { p, item } = shape;
+        const s = Math.max(0.45, p.s);
+        ctx.font = `600 ${Math.round(12 * s)}px Figtree, system-ui, sans-serif`;
+        const tw = ctx.measureText(item.name).width;
+        const bw = tw + 20 * s, bh = 26 * s;
+        ctx.globalAlpha = view === "3d" ? Math.max(0.35, Math.min(1, (p.s - 0.55) * 2.2)) : 1;
+        roundRect(p.x - bw / 2, p.y - bh / 2, bw, bh, 6 * s);
+        ctx.fillStyle = item.look.fill; ctx.fill();
+        ctx.strokeStyle = item.look.edge ?? item.look.fill; ctx.lineWidth = 1; ctx.stroke();
+        ctx.fillStyle = item.look.text; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText(item.name, p.x, p.y + 0.5);
+        ctx.globalAlpha = 1;
+        hitList.push({ kind: "item", item, radial: shape.radial, x: p.x - bw / 2, y: p.y - bh / 2, w: bw, h: bh, z: p.z });
+      } else {
+        const { p, radial } = shape;
+        ctx.font = "700 12px Figtree, system-ui, sans-serif";
+        const r = Math.max(26, ctx.measureText(radial.core).width / 2 + 9);
+        ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+        ctx.fillStyle = coreFill; ctx.fill();
+        ctx.lineWidth = radial === active ? 3 : 1.5; ctx.strokeStyle = coreEdge; ctx.stroke();
+        ctx.fillStyle = "#ffffff"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillText(radial.core || "Core", p.x, p.y + 0.5);
+        hitList.push({ kind: "core", radial, cx: p.x, cy: p.y, r, z: -1e9 });
+      }
+    }
+    requestAnimationFrame(draw);
+  }
+
+  // Pointer: core drag moves the whole radial; item drag places one item; empty drag pans (2D) or turns (3D).
+  let drag = null;
+  function hitAt(x, y) {
+    const hits = hitList.filter((hit) => hit.kind === "core" ? Math.hypot(x - hit.cx, y - hit.cy) <= hit.r : x >= hit.x && x <= hit.x + hit.w && y >= hit.y && y <= hit.y + hit.h);
+    // The core wins; then the nearest card.
+    return hits.find((hit) => hit.kind === "core") ?? hits.sort((a, b) => a.z - b.z)[0] ?? null;
+  }
+  canvas.addEventListener("pointerdown", (event) => {
+    const box = canvas.getBoundingClientRect();
+    const x = event.clientX - box.left, y = event.clientY - box.top;
+    const hit = hitAt(x, y);
+    drag = { hit, lastX: event.clientX, lastY: event.clientY };
+    if (hit !== null) { active = hit.radial; coreInput.value = active.core; countInput.value = active.items.length; countOut.textContent = active.items.length; radiusInput.value = active.radius; radiusOut.textContent = active.radius; }
+    canvas.setPointerCapture(event.pointerId);
+    canvas.classList.add("dragging");
+  });
+  canvas.addEventListener("pointermove", (event) => {
+    if (drag === null) return;
+    const dx = event.clientX - drag.lastX, dy = event.clientY - drag.lastY;
+    drag.lastX = event.clientX; drag.lastY = event.clientY;
+    if (drag.hit?.kind === "core") { drag.hit.radial.x += dx; drag.hit.radial.y += dy; }
+    else if (drag.hit?.kind === "item") {
+      // Move the item in the plane of the screen: turn the screen move back into ball space.
+      const back = view === "3d" ? unrotate([dx, dy, 0]) : [dx, dy, 0];
+      for (let k = 0; k < 3; k += 1) { drag.hit.item.target[k] += back[k]; drag.hit.item.offset[k] += back[k]; }
+    } else if (view === "3d") { rot.yaw += dx * 0.008; rot.pitch = Math.max(-1.4, Math.min(1.4, rot.pitch + dy * 0.008)); }
+    else { pan.x += dx; pan.y += dy; }
+  });
+  function unrotate([x, y, z]) {
+    const cy = Math.cos(rot.yaw), sy = Math.sin(rot.yaw), cp = Math.cos(rot.pitch), sp = Math.sin(rot.pitch);
+    const y1 = y * cp + z * sp, z1 = -y * sp + z * cp;
+    return [x * cy - z1 * sy, y1, x * sy + z1 * cy];
+  }
+  const end = () => { drag = null; canvas.classList.remove("dragging"); };
+  canvas.addEventListener("pointerup", end);
+  canvas.addEventListener("pointercancel", end);
+
+  // Controls work on the active radial (the last one touched).
+  const countOut = document.getElementById("countOut"), radiusOut = document.getElementById("radiusOut");
+  coreInput.addEventListener("input", () => { active.core = coreInput.value; });
+  countInput.addEventListener("input", () => {
+    countOut.textContent = countInput.value;
+    const next = makeRadial(active.core, Number(countInput.value), active.x, active.y, active.seed);
+    next.radius = active.radius; explode(next, active.seed);
+    Object.assign(active, { items: next.items });
+  });
+  radiusInput.addEventListener("input", () => { radiusOut.textContent = radiusInput.value; active.radius = Number(radiusInput.value); explode(active, active.seed); });
+  document.getElementById("explode").addEventListener("click", () => { active.seed += 1; explode(active, active.seed); });
+  document.getElementById("add").addEventListener("click", () => {
+    const radial = makeRadial("Reading list", 12, canvas.clientWidth * 0.28, 40, radials.length + 4);
+    radial.radius = 180; explode(radial, radial.seed);
+    radials.push(radial); active = radial;
+    coreInput.value = radial.core; countInput.value = 12; countOut.textContent = 12; radiusInput.value = 180; radiusOut.textContent = 180;
+  });
+  const v2d = document.getElementById("v2d"), v3d = document.getElementById("v3d");
+  v2d.addEventListener("click", () => { view = "2d"; v2d.classList.add("on"); v3d.classList.remove("on"); });
+  v3d.addEventListener("click", () => { view = "3d"; v3d.classList.add("on"); v2d.classList.remove("on"); });
+
+  // Start a little to the left on wide screens, so a second radial has room.
+  if (stage.clientWidth > 900) radials[0].x = -stage.clientWidth * 0.12;
+  requestAnimationFrame(draw);
+})();
+</script>

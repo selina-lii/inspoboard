@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { placeRecord, setPlacement3d } from "../src/core/actions";
 import { buildGalaxyModel, CLUSTER_SCALE, worldToPlacement } from "../src/ui/galaxy/galaxyModel";
-import { DATA_INTEGRITY, IDEAS, loadTestContext, RELATION, ROOT } from "./helpers";
+import { createInside } from "../src/core/inside";
+import { DATA_INTEGRITY, IDEAS, loadTestContext, RELATION, ROOT, TOOL_RESEARCH } from "./helpers";
 
 describe("galaxy model", () => {
   it("shows children at depth 1 and grandchildren as clusters at depth 2", () => {
@@ -30,6 +31,17 @@ describe("galaxy model", () => {
     const again = buildGalaxyModel(context.store, context.graph, ROOT).points.filter((point) => point.depth === 1);
     expect(new Set(first.map((point) => point.position[2])).size).toBeGreaterThan(1);
     expect(again.map((point) => point.position)).toEqual(first.map((point) => point.position));
+  });
+
+  it("puts the small items inside a page on a sphere around it (not a ring), and explode turns it", () => {
+    const context = loadTestContext();
+    for (const body of ["a", "b", "c", "d"]) context.history.run(createInside(context, { homeId: TOOL_RESEARCH, view: "note", at: null, body }).command);
+    const satellites = (seed: number) => buildGalaxyModel(context.store, context.graph, ROOT, seed).points.filter((point) => point.key.startsWith("inside:"));
+    const first = satellites(0);
+    expect(first).toHaveLength(4);
+    expect(new Set(first.map((point) => point.position[1].toFixed(3))).size).toBe(4);
+    expect(new Set(first.map((point) => point.position[2].toFixed(3))).size).toBeGreaterThan(1);
+    expect(satellites(1).map((point) => point.position)).not.toEqual(first.map((point) => point.position));
   });
 
   it("stops at depth 2 in a cycle", () => {

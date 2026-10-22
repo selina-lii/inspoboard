@@ -1,0 +1,451 @@
+<meta charset="utf-8">
+<title>Evolution Plot</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  /* Layout: the 3D view fills the page (the app's galaxy view); a slim HUD on top, a control strip at the bottom,
+     a lineage card at the right when an item is selected. One deep-space look, as the tour demo. */
+  :root {
+    --space: #05070d; --fg: #e9ecf5; --muted: #8e96ab; --panel: rgba(16, 20, 32, 0.66); --line: rgba(255, 255, 255, 0.12);
+    --accent: #8fb0ff; --made: #ffb86b; --nest: #7d879e; --stale: #ff7a45;
+    --display: "Figtree", system-ui, sans-serif; --mono: "JetBrains Mono", ui-monospace, monospace;
+    color-scheme: dark;
+  }
+  html, body { height: 100%; }
+  body { background: var(--space); color: var(--fg); font-family: var(--display); overflow: hidden; }
+  #stage { position: fixed; inset: 0; }
+  canvas { display: block; }
+  .labels { position: fixed; inset: 0; pointer-events: none; }
+  .label { position: absolute; transform: translate(-50%, 10px); font-size: 11px; font-weight: 600; color: var(--fg); text-shadow: 0 1px 3px #000; white-space: nowrap; opacity: 0.85; }
+  .label.layer { transform: translate(-50%, -100%); font-size: 13px; font-weight: 700; color: var(--accent); letter-spacing: 0.04em; text-transform: uppercase; }
+  .label.layer span { display: block; text-transform: none; letter-spacing: 0; font-weight: 400; font-size: 11px; color: var(--muted); text-align: center; }
+  .label.lineage { color: #fff; }
+  .label.selected { color: var(--made); font-size: 13px; }
+  .hud { position: fixed; top: calc(12px + env(safe-area-inset-top, 0px)); left: max(16px, env(safe-area-inset-left, 0px)); right: max(16px, env(safe-area-inset-right, 0px)); display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: baseline; pointer-events: none; }
+  .hud h1 { margin: 0; font-size: 15px; font-weight: 700; letter-spacing: 0.02em; }
+  .hud .now { font-size: 13px; color: var(--muted); }
+  .bar { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(14px + env(safe-area-inset-bottom, 0px)); width: min(820px, calc(100vw - 32px)); background: var(--panel); border: 1px solid var(--line); border-radius: 14px; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); padding: 10px 12px; display: grid; gap: 8px; }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+  .group { display: inline-flex; align-items: center; gap: 8px; }
+  .muted { color: var(--muted); font-size: 12px; }
+  button { font: inherit; font-size: 12px; color: var(--fg); background: rgba(255, 255, 255, 0.06); border: 1px solid var(--line); border-radius: 8px; padding: 6px 11px; cursor: pointer; }
+  button:hover { background: rgba(255, 255, 255, 0.12); }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; background: transparent; }
+  .seg button.on { background: rgba(143, 176, 255, 0.25); color: #fff; }
+  input[type="range"] { width: 110px; accent-color: var(--accent); }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11px; color: var(--muted); }
+  .legend i { display: inline-block; width: 14px; height: 2px; vertical-align: middle; margin-right: 5px; }
+  .legend b { display: inline-block; width: 9px; height: 9px; border-radius: 50%; vertical-align: middle; margin-right: 5px; }
+  .card { position: fixed; right: max(16px, env(safe-area-inset-right, 0px)); top: calc(48px + env(safe-area-inset-top, 0px)); width: min(280px, calc(100vw - 32px)); background: var(--panel); border: 1px solid var(--line); border-radius: 12px; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); padding: 12px 14px; display: grid; gap: 6px; font-size: 12px; }
+  .card h2 { margin: 0; font-size: 14px; text-wrap: balance; }
+  .card .kind { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  .card ul { margin: 0; padding-left: 16px; display: grid; gap: 2px; max-height: 160px; overflow: auto; }
+  .card .stale { color: var(--stale); }
+  .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  @media (max-width: 640px) { .card { top: auto; bottom: calc(170px + env(safe-area-inset-bottom, 0px)); } }
+</style>
+
+<div id="stage"></div>
+<div class="labels" id="labels"></div>
+<div class="hud">
+  <h1>Evolution</h1>
+  <span class="now" id="now"></span>
+</div>
+<aside class="card" id="card" hidden aria-live="polite"></aside>
+<div class="bar" role="group" aria-label="Evolution controls">
+  <div class="row">
+    <span class="group"><span class="muted">Depth</span>
+      <span class="seg" role="group" aria-label="Depth by">
+        <button data-depth="made" id="depth-made">Made from</button><button data-depth="nest" id="depth-nest">Nesting</button><button data-depth="both" id="depth-both" class="on">Both</button>
+      </span></span>
+    <span class="group"><span class="muted">Layout</span>
+      <span class="seg" role="group" aria-label="Layout">
+        <button data-layout="walls" id="layout-walls" class="on">Walls</button><button data-layout="floors" id="layout-floors">Floors</button>
+      </span></span>
+    <label class="group muted" for="nebula">Nebula <input type="range" id="nebula" min="0" max="10" step="0.5" value="4"></label>
+  </div>
+  <div class="row">
+    <div class="legend">
+      <span><i style="background: var(--made)"></i>made from (copy, clip, merge)</span>
+      <span><i style="background: var(--nest)"></i>inside a board</span>
+      <span><b style="background: transparent; border: 2px solid var(--stale); width: 7px; height: 7px"></b>source changed</span>
+    </div>
+    <span class="muted" style="margin-left: auto">Click an item to trace its lineage · Esc clears · drag to turn</span>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+// Layouts: walls (default) and floors. A ring layout was tried and removed: zoomed out, its items were too far away.
+(() => {
+  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let seed = 11;
+  const random = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+  const pick = (list) => list[Math.floor(random() * list.length)];
+
+  // ---- Sample vault: raw inputs, a processing map (copies, clips, merges, translations), and a study map
+  // downstream of it (summaries, many flash cards), with an exam deck inside the study map. ----
+  const KINDS = {
+    board: { color: 0x9fb6ff, size: 1.1, label: "board" }, map: { color: 0xc3a6ff, size: 1.1, label: "sorting map" },
+    note: { color: 0xffd60a, size: 0.34, label: "note" }, page: { color: 0xf2f2f7, size: 0.36, label: "page" },
+    pdf: { color: 0xff6b6b, size: 0.36, label: "PDF" }, quote: { color: 0xf4eed9, size: 0.3, label: "quote" },
+    clip: { color: 0xffe08a, size: 0.28, label: "clip" }, merge: { color: 0xffb86b, size: 0.4, label: "merged note" },
+    translation: { color: 0x5ad1c8, size: 0.3, label: "translation" }, summary: { color: 0xb388ff, size: 0.42, label: "summary" },
+    flash: { color: 0x6495ed, size: 0.3, label: "flash card" }, deck: { color: 0x4a90ff, size: 0.55, label: "deck" },
+  };
+  const items = [];
+  const byId = new Map();
+  function add(name, kind, board, sources = []) {
+    const item = { id: items.length, name, kind, board: board ? board.id : null, sources: sources.map((s) => s.id), stale: false };
+    items.push(item); byId.set(item.id, item);
+    return item;
+  }
+  const home = add("Home", "board", null);
+  const inbox = add("Inbox", "board", home), lecture = add("Lecture notes", "board", home), reading = add("Reading list", "board", home);
+  const INBOX = ["Idea: spaced repetition", "Call with advisor", "Neural nets intro", "Grocery list", "Paper deadline", "Attention mechanism", "Conference travel", "Gradient descent", "Dataset ideas", "Lab meeting", "Book: Deep Work", "Transformer sketch"];
+  const LECTURE = ["Week 1: Linear models", "Week 2: Backprop", "Week 3: CNNs", "Week 4: RNNs", "Week 5: Attention", "Week 6: Transformers", "Week 7: Optimization", "Week 8: Regularization", "Week 9: Generative models", "Week 10: Review"];
+  const READING = [["Attention Is All You Need", "pdf"], ["Deep Learning (book ch. 6)", "pdf"], ["The Illustrated Transformer", "page"], ["Adam optimizer", "pdf"], ["Dropout paper", "pdf"], ["Karpathy: Recipe for training", "page"], ["“All models are wrong…”", "quote"], ["Distill: Momentum", "page"]];
+  const raw = [];
+  INBOX.forEach((name) => raw.push(add(name, "note", inbox)));
+  LECTURE.forEach((name) => raw.push(add(name, "page", lecture)));
+  READING.forEach(([name, kind]) => raw.push(add(name, kind, reading)));
+
+  // Processing map: copies of edited cards, clips (one note split into pieces), merges (pasted from several), translations.
+  const mapA = add("Map of Inbox", "map", home);
+  const processed = [];
+  for (const source of raw.filter(() => random() < 0.45)) processed.push(add(`${source.name} (edited)`, source.kind, mapA, [source]));
+  const clipSources = raw.filter((item) => item.kind === "page" || item.kind === "pdf").slice(0, 9);
+  for (const source of clipSources) {
+    const pieces = 2 + Math.floor(random() * 3);
+    for (let k = 0; k < pieces; k += 1) processed.push(add(`${source.name.split(":")[0]}, part ${k + 1}`, "clip", mapA, [source]));
+  }
+  for (let k = 0; k < 6; k += 1) {
+    const from = [pick(raw), pick(raw), pick(raw)].filter((v, i, a) => a.indexOf(v) === i);
+    processed.push(add(`Merged notes ${k + 1}`, "merge", mapA, from));
+  }
+  const clips = processed.filter((item) => item.kind === "clip");
+  for (const source of clips.filter(() => random() < 0.3)) processed.push(add(`${source.name} (中文)`, "translation", mapA, [source]));
+
+  // Study map: downstream of the processing map. Summaries of several pieces; each piece explodes into flash cards.
+  const mapB = add("Study map", "map", home);
+  const summaries = [];
+  for (let k = 0; k < 8; k += 1) {
+    const from = Array.from({ length: 2 + Math.floor(random() * 3) }, () => pick(processed)).filter((v, i, a) => a.indexOf(v) === i);
+    summaries.push(add(`Summary ${k + 1}`, "summary", mapB, from));
+  }
+  const cards = [];
+  for (const source of [...clips, ...summaries].filter(() => random() < 0.7)) {
+    const count = 1 + Math.floor(random() * 4);
+    for (let k = 0; k < count; k += 1) cards.push(add(`Q: ${source.name.slice(0, 18)}… #${k + 1}`, "flash", mapB, [source]));
+  }
+  // An exam deck board inside the study map: decks made from many cards (the deepest layer).
+  const exam = add("Exam prep", "board", mapB);
+  for (let k = 0; k < 6; k += 1) {
+    const from = Array.from({ length: 4 + Math.floor(random() * 5) }, () => pick(cards)).filter((v, i, a) => a.indexOf(v) === i);
+    add(`Deck ${k + 1}`, "deck", exam, from);
+  }
+  // Some originals changed after they were used: everything made from them is marked.
+  const changed = new Set([raw[5].id, raw[16].id, raw[22].id]);
+  const children = new Map(items.map((item) => [item.id, []]));
+  for (const item of items) for (const source of item.sources) children.get(source).push(item.id);
+  const markStale = (id) => { for (const child of children.get(id)) { const c = byId.get(child); if (!c.stale) { c.stale = true; markStale(child); } } };
+  changed.forEach(markStale);
+
+  // ---- Depth: the longest path from a root over the chosen links (made from, nesting, or both). ----
+  function edgesOf(mode) {
+    const parents = new Map(items.map((item) => [item.id, []]));
+    for (const item of items) {
+      if (mode !== "nest") for (const source of item.sources) parents.get(item.id).push({ from: source, kind: "made" });
+      if (mode !== "made" && item.board !== null) parents.get(item.id).push({ from: item.board, kind: "nest" });
+    }
+    return parents;
+  }
+  function depths(parents) {
+    const depth = new Map();
+    const visit = (id, stack = new Set()) => {
+      if (depth.has(id)) return depth.get(id);
+      if (stack.has(id)) return 0;
+      stack.add(id);
+      const value = parents.get(id).reduce((max, edge) => Math.max(max, visit(edge.from, stack) + 1), 0);
+      stack.delete(id);
+      depth.set(id, value);
+      return value;
+    };
+    items.forEach((item) => visit(item.id));
+    return depth;
+  }
+
+  // ---- Layout of one generation: a loose nebula. Each item starts near its parents (short lines), then the items push
+  // each other apart; the layer grows with its count (deeper layers usually have more items). ----
+  const GAP = 34;
+  function layout(mode, nebula) {
+    const parents = edgesOf(mode);
+    const depth = depths(parents);
+    const layers = [];
+    for (const item of items) { const g = depth.get(item.id); (layers[g] ??= []).push(item); }
+    const flat = new Map(); // id -> [u, v, t]
+    layers.forEach((layer, g) => {
+      const spread = 3 + Math.sqrt(layer.length) * 2.2;
+      layer.forEach((item, k) => {
+        const above = parents.get(item.id).map((edge) => flat.get(edge.from)).filter(Boolean);
+        let u, v;
+        if (above.length > 0) {
+          u = above.reduce((s, p) => s + p[0], 0) / above.length; v = above.reduce((s, p) => s + p[1], 0) / above.length;
+          const a = random() * Math.PI * 2, r = 1.5 + random() * 3;
+          u += Math.cos(a) * r; v += Math.sin(a) * r;
+        } else {
+          // Sunflower spiral for items with no parent in a lower layer.
+          const a = k * 2.39996, r = spread * Math.sqrt((k + 0.5) / layer.length);
+          u = Math.cos(a) * r; v = Math.sin(a) * r;
+        }
+        // Gaussian-ish thickness: the nebula depth across the layer.
+        const t = (random() + random() + random() - 1.5) * nebula;
+        flat.set(item.id, [u, v, t]);
+      });
+      // Relax: push apart closer than MIN, and pull a little toward the layer center (keeps the nebula round).
+      const MIN = 2.6;
+      for (let step = 0; step < 60; step += 1) {
+        for (let i = 0; i < layer.length; i += 1) {
+          const a = flat.get(layer[i].id);
+          for (let j = i + 1; j < layer.length; j += 1) {
+            const b = flat.get(layer[j].id);
+            const du = a[0] - b[0], dv = a[1] - b[1], d = Math.hypot(du, dv) || 0.01;
+            if (d < MIN) { const push = (MIN - d) / 2 / d; a[0] += du * push; a[1] += dv * push; b[0] -= du * push; b[1] -= dv * push; }
+          }
+          a[0] *= 0.995; a[1] *= 0.995;
+        }
+      }
+    });
+    const place = new Map();
+    for (const item of items) {
+      const g = depth.get(item.id), [u, v, t] = flat.get(item.id);
+      let p;
+      if (current.layout === "walls") p = new THREE.Vector3(g * GAP + t, v, u);
+      else p = new THREE.Vector3(u, g * GAP * 0.8 + t, v);
+      place.set(item.id, p);
+    }
+    return { parents, depth, layers, place };
+  }
+
+  // ---- Scene ----
+  const stage = document.getElementById("stage");
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  stage.appendChild(renderer.domElement);
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x05070d);
+  scene.fog = new THREE.FogExp2(0x05070d, 0.005);
+  const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 900);
+  const controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true; controls.dampingFactor = 0.08;
+  scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+  const sun = new THREE.PointLight(0xffffff, 1.1, 0, 2); sun.position.set(40, 80, 60); scene.add(sun);
+
+  const glowCanvas = document.createElement("canvas"); glowCanvas.width = glowCanvas.height = 64;
+  const g2 = glowCanvas.getContext("2d"); const grad = g2.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grad.addColorStop(0, "rgba(255,255,255,0.9)"); grad.addColorStop(0.3, "rgba(255,255,255,0.25)"); grad.addColorStop(1, "rgba(255,255,255,0)");
+  g2.fillStyle = grad; g2.fillRect(0, 0, 64, 64);
+  const glow = new THREE.CanvasTexture(glowCanvas);
+
+  const meshes = [];
+  for (const item of items) {
+    const look = KINDS[item.kind];
+    const flatCard = ["note", "flash", "quote", "clip", "merge", "translation", "summary"].includes(item.kind);
+    const geometry = item.kind === "board" || item.kind === "map" || item.kind === "deck" ? new THREE.SphereGeometry(look.size, 24, 16)
+      : item.kind === "page" || item.kind === "pdf" ? new THREE.BoxGeometry(look.size * 1.2, look.size * 1.6, look.size * 0.08)
+      : flatCard ? new THREE.BoxGeometry(look.size * 1.6, look.size * 1.3, look.size * 0.2) : new THREE.SphereGeometry(look.size, 16, 12);
+    const material = new THREE.MeshStandardMaterial({ color: look.color, emissive: look.color, emissiveIntensity: 0.35, roughness: 0.6, transparent: true });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.rotation.set(random() * 0.6, random() * Math.PI, 0);
+    mesh.userData.id = item.id;
+    scene.add(mesh);
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: glow, color: look.color, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+    sprite.scale.setScalar(look.size * 4);
+    scene.add(sprite);
+    let ring = null;
+    if (item.stale) {
+      ring = new THREE.Mesh(new THREE.TorusGeometry(look.size * 1.6, 0.06, 8, 40), new THREE.MeshBasicMaterial({ color: 0xff7a45, transparent: true }));
+      scene.add(ring);
+    }
+    if (item.kind === "map") {
+      ring = new THREE.Mesh(new THREE.TorusGeometry(look.size * 1.8, 0.05, 8, 64), new THREE.MeshBasicMaterial({ color: 0xd9c9ff, transparent: true, opacity: 0.6 }));
+      ring.rotation.x = Math.PI / 2.4; scene.add(ring);
+    }
+    item.mesh = mesh; item.sprite = sprite; item.ring = ring;
+    item.at = new THREE.Vector3((random() - 0.5) * 60, (random() - 0.5) * 60, (random() - 0.5) * 60);
+    item.goal = item.at.clone();
+    meshes.push(mesh);
+  }
+  // Lines: one buffer for each kind; positions follow the items each frame.
+  function lineSet(color, opacity) {
+    const geometry = new THREE.BufferGeometry();
+    const material = new THREE.LineBasicMaterial({ color, transparent: true, opacity, vertexColors: false });
+    const lines = new THREE.LineSegments(geometry, material);
+    scene.add(lines);
+    return { geometry, material, lines, pairs: [] };
+  }
+  const madeLines = lineSet(0xffb86b, 0.32), nestLines = lineSet(0x7d879e, 0.16), hotLines = lineSet(0xffe2b8, 0.9);
+  // Background dust.
+  const dust = new THREE.BufferGeometry(); const dustPoints = [];
+  for (let k = 0; k < 2500; k += 1) { const r = 260 + random() * 260, t = random() * Math.PI * 2, p = Math.acos(2 * random() - 1); dustPoints.push(r * Math.sin(p) * Math.cos(t), r * Math.cos(p), r * Math.sin(p) * Math.sin(t)); }
+  dust.setAttribute("position", new THREE.Float32BufferAttribute(dustPoints, 3));
+  scene.add(new THREE.Points(dust, new THREE.PointsMaterial({ color: 0xaab4d0, size: 0.7, transparent: true, opacity: 0.6 })));
+  // Layer veils: a faint disc for each generation, to read the planes.
+  const veils = [];
+
+  // ---- Labels ----
+  const labelLayer = document.getElementById("labels");
+  for (const item of items) {
+    const el = document.createElement("div"); el.className = "label"; el.textContent = item.name; el.style.display = "none";
+    labelLayer.appendChild(el); item.label = el;
+  }
+  let layerLabels = [];
+
+  // ---- State ----
+  const current = { depth: "both", layout: "walls", nebula: 4, selected: null };
+  let model = null, lineage = null;
+  const now = document.getElementById("now"), card = document.getElementById("card");
+
+  function rebuild(resetView) {
+    seed = 99; // the same nebula for the same choices
+    model = layout(current.depth, current.nebula);
+    for (const item of items) item.goal = model.place.get(item.id);
+    madeLines.pairs = []; nestLines.pairs = [];
+    for (const item of items) for (const edge of model.parents.get(item.id)) (edge.kind === "made" ? madeLines : nestLines).pairs.push([edge.from, item.id]);
+    for (const set of [madeLines, nestLines, hotLines]) set.geometry.setAttribute("position", new THREE.Float32BufferAttribute(new Float32Array(set.pairs.length * 6), 3));
+    // Layer labels and veils.
+    layerLabels.forEach((el) => el.remove()); layerLabels = [];
+    veils.forEach((veil) => scene.remove(veil)); veils.length = 0;
+    model.layers.forEach((layer, g) => {
+      const center = layer.reduce((s, item) => s.add(model.place.get(item.id)), new THREE.Vector3()).divideScalar(layer.length);
+      const radius = Math.max(4, ...layer.map((item) => model.place.get(item.id).distanceTo(center))) + 2;
+      const el = document.createElement("div"); el.className = "label layer";
+      const kinds = {}; layer.forEach((item) => { kinds[KINDS[item.kind].label] = (kinds[KINDS[item.kind].label] ?? 0) + 1; });
+      const top = Object.entries(kinds).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([k, n]) => `${n} ${k}${n > 1 ? "s" : ""}`).join(", ");
+      el.innerHTML = `Gen ${g}<span>${layer.length} items · ${top}</span>`;
+      labelLayer.appendChild(el); layerLabels.push(el);
+      el.anchor = center.clone().add(current.layout === "floors" ? new THREE.Vector3(0, 0, -radius) : new THREE.Vector3(0, radius, 0));
+      const veil = new THREE.Mesh(new THREE.CircleGeometry(radius, 48), new THREE.MeshBasicMaterial({ color: 0x8fb0ff, transparent: true, opacity: 0.035, side: THREE.DoubleSide, depthWrite: false }));
+      veil.position.copy(center);
+      if (current.layout === "walls") veil.rotation.y = Math.PI / 2; else veil.rotation.x = Math.PI / 2;
+      scene.add(veil); veils.push(veil);
+    });
+    if (current.selected !== null) select(current.selected); else updateLineage();
+    if (resetView) frameAll();
+    const counts = model.layers.map((layer) => layer.length).join(" → ");
+    now.innerHTML = `${items.length} items · ${model.layers.length} generations · <span class="num">${counts}</span>`;
+  }
+
+  function frameAll() {
+    const box = new THREE.Box3(); for (const item of items) box.expandByPoint(item.goal);
+    const center = box.getCenter(new THREE.Vector3()), size = box.getSize(new THREE.Vector3()).length();
+    controls.target.copy(center);
+    const dir = current.layout === "walls" ? new THREE.Vector3(0.15, 0.35, 1) : new THREE.Vector3(1, 0.35, 0.9);
+    camera.position.copy(center).add(dir.normalize().multiplyScalar(size * 0.85));
+  }
+
+  // ---- Lineage: ancestors and descendants over the links of the chosen depth. ----
+  function updateLineage() {
+    lineage = null; hotLines.pairs = [];
+    if (current.selected === null) { card.hidden = true; return; }
+    const kids = new Map(items.map((item) => [item.id, []]));
+    for (const item of items) for (const edge of model.parents.get(item.id)) kids.get(edge.from).push(item.id);
+    const up = new Set(), down = new Set();
+    const climb = (id) => { for (const edge of model.parents.get(id)) if (!up.has(edge.from)) { up.add(edge.from); hotLines.pairs.push([edge.from, id]); climb(edge.from); } };
+    const fall = (id) => { for (const child of kids.get(id)) if (!down.has(child)) { down.add(child); hotLines.pairs.push([id, child]); fall(child); } };
+    climb(current.selected); fall(current.selected);
+    lineage = new Set([current.selected, ...up, ...down]);
+    hotLines.geometry.setAttribute("position", new THREE.Float32BufferAttribute(new Float32Array(hotLines.pairs.length * 6), 3));
+    const item = byId.get(current.selected);
+    const direct = item.sources.map((id) => byId.get(id));
+    card.hidden = false;
+    card.innerHTML = `<h2>${item.name}</h2><span class="kind">${KINDS[item.kind].label} · Gen ${model.depth.get(item.id)}${item.board !== null ? ` · in ${byId.get(item.board).name}` : ""}</span>`
+      + (item.stale ? `<span class="stale">A source changed since this was made: it is in the Updates tray.</span>` : "")
+      + `<span>${up.size} ancestors · ${down.size} descendants</span>`
+      + (direct.length > 0 ? `<span class="muted">Made from</span><ul>${direct.map((s) => `<li>${s.name}</li>`).join("")}</ul>` : `<span class="muted">An original: nothing it was made from.</span>`);
+  }
+  function select(id) { current.selected = id; updateLineage(); }
+
+  // ---- Input ----
+  const raycaster = new THREE.Raycaster(), pointer = new THREE.Vector2();
+  let downAt = null;
+  renderer.domElement.addEventListener("pointerdown", (event) => { downAt = [event.clientX, event.clientY]; });
+  renderer.domElement.addEventListener("pointerup", (event) => {
+    if (downAt === null || Math.hypot(event.clientX - downAt[0], event.clientY - downAt[1]) > 5) return;
+    pointer.set((event.clientX / innerWidth) * 2 - 1, -(event.clientY / innerHeight) * 2 + 1);
+    raycaster.setFromCamera(pointer, camera);
+    const hit = raycaster.intersectObjects(meshes)[0];
+    select(hit ? hit.object.userData.id : null);
+  });
+  addEventListener("keydown", (event) => { if (event.key === "Escape") select(null); });
+  document.querySelectorAll("[data-depth]").forEach((button) => button.addEventListener("click", () => {
+    current.depth = button.dataset.depth;
+    document.querySelectorAll("[data-depth]").forEach((other) => other.classList.toggle("on", other === button));
+    rebuild(true);
+  }));
+  document.querySelectorAll("[data-layout]").forEach((button) => button.addEventListener("click", () => {
+    current.layout = button.dataset.layout;
+    document.querySelectorAll("[data-layout]").forEach((other) => other.classList.toggle("on", other === button));
+    rebuild(true);
+  }));
+  document.getElementById("nebula").addEventListener("input", (event) => { current.nebula = Number(event.target.value); rebuild(false); });
+
+  function resize() { const w = innerWidth, h = innerHeight; renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix(); }
+  addEventListener("resize", resize); resize();
+  rebuild(true);
+  if (reduced) for (const item of items) item.at.copy(item.goal);
+
+  // ---- Frame ----
+  const tmp = new THREE.Vector3();
+  let last = performance.now();
+  function writeLines(set) {
+    const array = set.geometry.attributes.position.array;
+    set.pairs.forEach(([a, b], i) => { const p = byId.get(a).at, q = byId.get(b).at; array.set([p.x, p.y, p.z, q.x, q.y, q.z], i * 6); });
+    set.geometry.attributes.position.needsUpdate = true;
+    set.geometry.computeBoundingSphere();
+  }
+  function frame(timeNow) {
+    const dt = Math.min(0.05, (timeNow - last) / 1000); last = timeNow;
+    const ease = reduced ? 1 : 1 - Math.exp(-dt * 3.2);
+    for (const item of items) {
+      item.at.lerp(item.goal, ease);
+      item.mesh.position.copy(item.at); item.sprite.position.copy(item.at);
+      if (item.ring) { item.ring.position.copy(item.at); if (item.stale) item.ring.lookAt(camera.position); }
+      const on = lineage === null || lineage.has(item.id);
+      item.mesh.material.opacity = on ? 1 : 0.12;
+      item.sprite.material.opacity = on ? (item.id === current.selected ? 1 : 0.8) : 0.05;
+      if (item.ring) item.ring.material.opacity = on ? (item.kind === "map" ? 0.6 : 0.9) : 0.05;
+    }
+    madeLines.material.opacity = lineage === null ? 0.32 : 0.06;
+    nestLines.material.opacity = lineage === null ? 0.16 : 0.03;
+    writeLines(madeLines); writeLines(nestLines); writeLines(hotLines);
+    controls.update();
+    // Labels: the lineage of the selected item; else items near the camera; layer labels always.
+    for (const item of items) {
+      tmp.copy(item.at).project(camera);
+      const distance = camera.position.distanceTo(item.at);
+      const inLineage = lineage !== null && lineage.has(item.id);
+      const big = item.kind === "map" || item.kind === "board";
+      const show = tmp.z < 1 && Math.abs(tmp.x) < 1.1 && Math.abs(tmp.y) < 1.1 && (inLineage ? distance < 220 : lineage === null && (big ? distance < 140 : distance < 26));
+      item.label.style.display = show ? "" : "none";
+      if (!show) continue;
+      item.label.style.left = `${((tmp.x + 1) / 2) * innerWidth}px`;
+      item.label.style.top = `${((1 - tmp.y) / 2) * innerHeight}px`;
+      item.label.className = `label${item.id === current.selected ? " selected" : inLineage ? " lineage" : ""}`;
+      item.label.style.opacity = inLineage || big ? "0.95" : String(Math.max(0.25, 1 - distance / 26));
+    }
+    for (const el of layerLabels) {
+      tmp.copy(el.anchor).project(camera);
+      const show = tmp.z < 1 && Math.abs(tmp.x) < 1.2 && Math.abs(tmp.y) < 1.2;
+      el.style.display = show ? "" : "none";
+      if (show) { el.style.left = `${((tmp.x + 1) / 2) * innerWidth}px`; el.style.top = `${((1 - tmp.y) / 2) * innerHeight}px`; }
+    }
+    renderer.render(scene, camera);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>

@@ -29,9 +29,9 @@ describe("UI language", () => {
 
   it("uses the words of the user's terms in both Chinese packs", () => {
     setUiLanguage("zh-Hant");
-    expect([t("Board"), t("Page"), t("Flashcard"), t("Web link"), t("Link"), t("Color"), t("Your name")]).toEqual(["畫板", "文檔", "單詞卡", "鏈接", "連接兩個結點", "調色板", "用戶暱稱"]);
+    expect([t("Board"), t("Page"), t("Flashcard"), t("URL"), t("Link"), t("Color"), t("Your name")]).toEqual(["畫板", "文檔", "單詞卡", "鏈接", "連接兩個結點", "調色板", "用戶暱稱"]);
     setUiLanguage("zh");
-    expect([t("Board"), t("Page"), t("Flashcard"), t("Web link"), t("Link"), t("Color"), t("Your name")]).toEqual(["画板", "文档", "单词卡", "链接", "连接两个结点", "调色板", "用户昵称"]);
+    expect([t("Board"), t("Page"), t("Flashcard"), t("URL"), t("Link"), t("Color"), t("Your name")]).toEqual(["画板", "文档", "单词卡", "链接", "连接两个结点", "调色板", "用户昵称"]);
     expect(t("Action items: all open ones")).toBe("查看所有待办事项");
   });
 

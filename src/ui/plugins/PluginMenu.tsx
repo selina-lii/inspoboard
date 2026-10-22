@@ -1,7 +1,7 @@
 // Tool bar buttons for plugins that transform text (for example a translator) or read text aloud. See docs/PLUGINS.md.
 // The core knows nothing about what a plugin does. It shows the plugin options and sends item texts.
 
-import { AudioLines, Globe, Languages, LoaderCircle, Puzzle, Sigma, Sparkles, Wand2, X } from "lucide-react";
+import { AudioLines, Columns2, Globe, Languages, LoaderCircle, Puzzle, Sigma, Sparkles, Wand2, X } from "lucide-react";
 import { MovablePanel } from "../app/movable";
 import { useEffect, useRef, useState, type ComponentType } from "react";
 import type { Id } from "../../core/types";
@@ -18,6 +18,7 @@ import { fileNameOf, multilingualMarkdown, translationsMarkdown } from "./export
 import type { OverlayMap } from "./overlay";
 import { selectedText, selectedTextItem, translateSelection } from "./SelectionTranslate";
 import "./plugins.css";
+import { useDismiss } from "../app/useDismiss";
 
 /** `options`: the option values of the plugin. An icon can show the current option (see HanIcon). */
 export type PluginIconType = ComponentType<{ size?: number; options?: Readonly<Record<string, string>> }>;
@@ -35,7 +36,7 @@ function HanIcon({ size = 16, options }: { size?: number; options?: Readonly<Rec
 }
 
 /** Icons that a plugin can name in its "info" reply. */
-export const PLUGIN_ICONS: Record<string, PluginIconType> = { languages: Languages, sparkles: Sparkles, wand: Wand2, speech: AudioLines, globe: Globe, han: HanIcon, sigma: Sigma };
+export const PLUGIN_ICONS: Record<string, PluginIconType> = { languages: Languages, sparkles: Sparkles, wand: Wand2, speech: AudioLines, globe: Globe, han: HanIcon, sigma: Sigma, compare: Columns2 };
 
 /** The capabilities that get a tool bar button. */
 const MENU_CAPABILITIES = ["transform-text", "convert-text", "speak-text"];
@@ -101,20 +102,8 @@ function PluginButton({ plugin, selectedIds: boardSelection, boardItemIds, scope
   };
   const percent = job === null || job.total === 0 ? null : Math.round((100 * job.done) / job.total);
 
-  // A click outside closes the menu.
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (event: PointerEvent) => {
-      if (frame.current !== null && !frame.current.contains(event.target as Node)) setOpen(false);
-    };
-    const onKeyDown = (event: KeyboardEvent) => event.key === "Escape" && setOpen(false);
-    window.addEventListener("pointerdown", onPointerDown);
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener("pointerdown", onPointerDown);
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, [open]);
+  // A click outside, or Esc, closes the menu.
+  useDismiss(open, frame, () => setOpen(false));
 
   return (
     <span className="plugin-menu" ref={frame}>
@@ -158,12 +147,22 @@ function PluginButton({ plugin, selectedIds: boardSelection, boardItemIds, scope
                   <option value="paper">Paper (no references)</option>
                 </select>
               </label>
-              <label className="plugin-check plugin-select-row" data-tip="The voice makes audio while it reads. More audio ahead: fewer pauses, but more work and memory.">
+              <label className="plugin-check plugin-select-row" data-tip="The voice makes audio while it reads, one clip for each sentence (the highlight follows the text). The first two choices play at once. “All audio first” waits for the whole text and keeps all audio in memory: only for short texts.">
                 <span>Audio ahead</span>
                 <select value={settings.speechAhead} onChange={(event) => void session.updateSettings({ speechAhead: event.target.value as "window" | "end" | "all" })}>
-                  <option value="window">About 1 minute</option>
+                  <option value="window">Up to 100 sentences ahead</option>
                   <option value="end">To the end, while it plays</option>
                   <option value="all">All audio first, then play</option>
+                </select>
+              </label>
+              <label className="plugin-check plugin-select-row" data-tip="With “Formulas → words” on: each formula is said slower than the reading speed by this much (formulas are harder to follow by ear).">
+                <span>Formulas slower by</span>
+                <select value={String(settings.speechFormulaSlower)} onChange={(event) => void session.updateSettings({ speechFormulaSlower: Number(event.target.value) })}>
+                  {[0, 0.25, 0.5, 0.75, 1].map((value) => (
+                    <option key={value} value={String(value)}>
+                      {value === 0 ? "Same speed" : `${value.toFixed(2)}×`}
+                    </option>
+                  ))}
                 </select>
               </label>
               {/* A "math-text" plugin: how read-aloud says formulas. */}

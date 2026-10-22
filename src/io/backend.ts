@@ -1,8 +1,9 @@
 // Bridge to the Tauri backend. This is the only module that imports @tauri-apps packages.
 // Other modules use the Backend type. Tests can give a fake backend.
 
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open, save } from "@tauri-apps/plugin-dialog";
 
@@ -25,7 +26,8 @@ export type OpenedVault = {
 /** `content: null` moves the file to the trash. */
 export type FileWrite = { path: string; content: string | null };
 
-export type FileChange = { path: string; content: string | null; unreadable: boolean };
+/** `root`: the vault folder of the change (each window takes the changes of its own vault). Missing: older backends. */
+export type FileChange = { root?: string; path: string; content: string | null; unreadable: boolean };
 
 export type SnapshotInfo = { id: string; message: string; time: number };
 /** A backup folder: its full path, its size in bytes, and its number of files. */
@@ -36,6 +38,10 @@ export type BackupEntry = BackupInfo & { name: string };
 export type Backend = {
   openVault(path: string): Promise<OpenedVault>;
   closeVault(): Promise<void>;
+  /** A new app window: it opens the vault (null: it asks for one). A vault that a window shows comes to the front. */
+  openVaultWindow(path: string | null): Promise<void>;
+  /** True if a different window shows the vault: that window comes to the front. */
+  focusVaultWindow(path: string): Promise<boolean>;
   /** Each call names its vault. If the backend lost the open vault, it opens it again. */
   writeFiles(root: string, writes: FileWrite[]): Promise<void>;
   /** Returns the snapshot ID, or null if nothing changed. */
@@ -56,6 +62,8 @@ export type Backend = {
   importImage(root: string, source: string): Promise<string>;
   /** Saves image bytes (a pasted or dropped image) into `images/` of the vault. `name` gives the type: "pasted.png". Returns its vault path. */
   saveImageBytes(root: string, name: string, bytes: Uint8Array): Promise<string>;
+  /** Saves the images on the system clipboard into `images/` of the vault. Returns their vault paths (empty if none). */
+  pasteImages(root: string): Promise<string[]>;
   /** The bytes of an image of the vault (`images/<name>`). */
   readImage(root: string, path: string): Promise<ArrayBuffer>;
   /** A saved web page or its notes (`web/<key>.html`, `web/<key>.notes.json`), or null if there is none. */
@@ -63,7 +71,17 @@ export type Backend = {
   writeWebFile(root: string, path: string, content: string): Promise<void>;
   /** A saved PDF (`web/<key>.pdf`). Rejects if it is not there. */
   readWebBytes(root: string, path: string): Promise<ArrayBuffer>;
+  /**
+   * The address of a PDF page drawn by the backend (PDFium; src-tauri/src/pdf_pages.rs): page `page` (1-based) of
+   * `web/<key>.pdf`, `width` pixels wide, as PNG; `crop`: a part of the page in page units. Null: no such backend
+   * (the reader draws with pdf.js).
+   */
+  pdfPageUrl(key: string, page: number, width: number, crop?: { left: number; top: number; width: number; height: number }): string | null;
   writeWebBytes(root: string, path: string, bytes: Uint8Array): Promise<void>;
+  /** The size in bytes of the files of these items: saved web page or PDF, their notes, and marks (SPEC 7.16). */
+  itemFilesSize(root: string, keys: readonly string[]): Promise<number>;
+  /** Copies the files of an item to its copy. Returns the number of files copied. */
+  copyItemFiles(root: string, from: string, to: string): Promise<number>;
   /** A file dialog for one PDF. */
   choosePdf(): Promise<string | null>;
   /** Copies a PDF into the vault (web/<key>.pdf). Returns its key. */
@@ -90,11 +108,19 @@ export type Backend = {
   onCloseRequested(handler: () => Promise<void>): Promise<() => void>;
   /** Menu commands from the native menu, for example "vault-open". */
   onMenu(listener: (id: string) => void): Promise<() => void>;
+  /** Lines for the session log (see src-tauri/src/debug_log.rs). Each call is also the heartbeat of the UI. */
+  logEvents(lines: string[]): Promise<void>;
+  /** The session log file (null before a vault opens). */
+  logPath(): Promise<string | null>;
+  /** Files dropped on the window from the system (Finder): their full paths, and the point in CSS pixels. */
+  onFileDrop(listener: (drop: { paths: string[]; x: number; y: number }) => void): Promise<() => void>;
 };
 
 export const tauriBackend: Backend = {
   openVault: (path) => invoke<OpenedVault>("open_vault", { path }),
   closeVault: () => invoke<void>("close_vault"),
+  openVaultWindow: (path) => invoke<void>("open_vault_window", { path }),
+  focusVaultWindow: (path) => invoke<boolean>("focus_vault_window", { path }),
   writeFiles: (root, writes) => invoke<void>("write_files", { root, writes }),
   snapshot: (root, message) => invoke<string | null>("snapshot", { root, message }),
   listSnapshots: (root, limit) => invoke<SnapshotInfo[]>("list_snapshots", { root, limit }),
@@ -108,7 +134,11 @@ export const tauriBackend: Backend = {
   exportBundle: (root, parent, name, files, images) => invoke<string>("export_bundle", { root, parent, name, files, images }),
   readBundle: (folder) => invoke<{ files: Record<string, string>; images: string[] }>("read_bundle", { folder }),
   importBundleImages: (root, folder, images) => invoke<Record<string, string>>("import_bundle_images", { root, folder, images }),
-  startupVault: () => invoke<string | null>("startup_vault"),
+  // A window of "Open Vault in New Window" has its vault (or null: it asks); the first window asks the backend.
+  startupVault: () => {
+    const preset = (window as { __INSPOBOARD_VAULT__?: string | null }).__INSPOBOARD_VAULT__;
+    return preset !== undefined ? Promise.resolve(preset) : invoke<string | null>("startup_vault");
+  },
   chooseFolder: async (title = "Select a vault folder") => {
     const result = await open({ directory: true, multiple: false, title: words(title) });
     return typeof result === "string" ? result : null;
@@ -119,11 +149,20 @@ export const tauriBackend: Backend = {
   },
   importImage: (root, source) => invoke<string>("import_image", { root, source }),
   readImage: (root, path) => invoke<ArrayBuffer>("read_image", { root, path }),
+  pasteImages: (root) => invoke<string[]>("paste_images", { root }),
   saveImageBytes: (root, name, bytes) => invoke<string>("save_image_bytes", bytes, { headers: { "x-root": encodeURIComponent(root), "x-name": encodeURIComponent(name) } }),
   readWebFile: (root, path) => invoke<string | null>("read_web_file", { root, path }),
   writeWebFile: (root, path, content) => invoke<void>("write_web_file", { root, path, content }),
   readWebBytes: (root, path) => invoke<ArrayBuffer>("read_web_bytes", { root, path }),
+  pdfPageUrl: (key, page, width, crop) => {
+    // The base of the scheme on this platform ("pdfpage://localhost/" or "http://pdfpage.localhost/").
+    const base = convertFileSrc("", "pdfpage");
+    const part = crop === undefined ? "" : `&crop=${[crop.left, crop.top, crop.width, crop.height].map((value) => value.toFixed(2)).join(",")}`;
+    return `${base}${encodeURIComponent(key)}/${page}?w=${Math.round(width)}${part}`;
+  },
   writeWebBytes: (root, path, bytes) => invoke<void>("write_web_bytes", bytes, { headers: { "x-root": encodeURIComponent(root), "x-path": encodeURIComponent(path) } }),
+  itemFilesSize: (root, keys) => invoke<number>("item_files_size", { root, keys }),
+  copyItemFiles: (root, from, to) => invoke<number>("copy_item_files", { root, from, to }),
   choosePdf: async () => {
     const result = await open({ multiple: false, title: words("Open a PDF"), filters: [{ name: "PDF", extensions: ["pdf"] }] });
     return typeof result === "string" ? result : null;
@@ -138,6 +177,16 @@ export const tauriBackend: Backend = {
   onFileChange: (listener) => listen<FileChange>("vault-file-changed", (event) => listener(event.payload)),
   onCloseRequested: (handler) => getCurrentWindow().onCloseRequested(handler),
   onMenu: (listener) => listen<string>("menu", (event) => listener(event.payload)),
+  logEvents: (lines) => invoke<void>("log_events", { lines }),
+  logPath: () => invoke<string | null>("log_path"),
+  onFileDrop: (listener) =>
+    getCurrentWebview().onDragDropEvent((event) => {
+      if (event.payload.type !== "drop" || event.payload.paths.length === 0) return;
+      // The position is called physical, but on macOS it is in points, as the page coordinates (wry drag_drop.rs).
+      // Other systems give physical pixels.
+      const scale = /Mac/.test(navigator.userAgent) ? 1 : window.devicePixelRatio || 1;
+      listener({ paths: event.payload.paths, x: event.payload.position.x / scale, y: event.payload.position.y / scale });
+    }),
 };
 
 /** A plugin in the plugins folder. See docs/PLUGINS.md. */
@@ -147,6 +196,8 @@ export type PluginInfo = {
   title: string;
   version: string;
   capabilities: string[];
+  /** A lab plugin: experimental (`"lab": true` in plugin.json). */
+  lab?: boolean;
   /** Why the plugin cannot start, or null. */
   problem: string | null;
 };

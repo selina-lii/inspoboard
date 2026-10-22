@@ -19,6 +19,7 @@ import {
 } from "../src/core/actions";
 import { referenceProblems, schemaErrors } from "../src/core/validate";
 import { decodeVault, encodeVault } from "../src/core/format";
+import type { PlaceLink } from "../src/core/types";
 import { DATA_INTEGRITY, IDEAS, loadTestContext, RELATION, ROOT, TOOL_RESEARCH } from "./helpers";
 
 describe("actions", () => {
@@ -129,6 +130,18 @@ describe("link caps and collapse all", () => {
     expect("start" in link || "end" in link).toBe(false);
   });
 
+  it("sets and removes the line color and the dashes of a link", () => {
+    const context = loadTestContext();
+    context.history.run(updateRelation(context, RELATION, { color: "#ff453a", dashed: true }));
+    const link = context.store.get("links", RELATION)!;
+    expect(link).toMatchObject({ color: "#ff453a", dashed: true });
+    expect(schemaErrors("links", link)).toEqual([]);
+    expect(schemaErrors("links", { ...link, color: "red" })).not.toEqual([]);
+    context.history.run(updateRelation(context, RELATION, { color: null, dashed: false }));
+    const plain = context.store.get("links", RELATION)!;
+    expect("color" in plain || "dashed" in plain).toBe(false);
+  });
+
   it("collapses all expanded cards on a board in one command", () => {
     const context = loadTestContext();
     context.history.run(setPlacementExpanded(context, "p1a1a1a1a1a1", true));
@@ -224,6 +237,34 @@ describe("move into board", () => {
     expect(context.store.get("links", "p1a1a1a1a1a1")).toMatchObject({ from: ROOT, x: 0, y: 0 });
   });
 
+  it("moves an outline row with its child rows as a new outline, and a whole outline as it is", async () => {
+    const { createOutline } = await import("../src/core/outline");
+    const { makeOp } = await import("../src/core/commands");
+    const context = loadTestContext();
+    // Root outline: Tool research (p1) with child Data integrity (p4), and the Ideas board (p2) as a top row.
+    const made = createOutline(context, ROOT, ["p1a1a1a1a1a1", "p2b2b2b2b2b2", "p4d4d4d4d4d4"]);
+    context.history.run(made.command);
+    const child = context.store.get("links", "p4d4d4d4d4d4") as PlaceLink;
+    context.history.run({ label: "Indent", ops: [makeOp("links", child.id, child, { ...child, parent: "p1a1a1a1a1a1", rank: 0 })] });
+    context.history.run(moveIntoBoard(context, ["p1a1a1a1a1a1"], IDEAS));
+    const row = context.store.get("links", "p1a1a1a1a1a1") as PlaceLink;
+    const moved = context.store.get("links", "p4d4d4d4d4d4") as PlaceLink;
+    expect(row).toMatchObject({ from: IDEAS, rank: 0 });
+    expect(row.parent).toBeUndefined();
+    expect(row.outline).not.toBe(made.outlineId);
+    expect(moved).toMatchObject({ from: IDEAS, outline: row.outline, parent: "p1a1a1a1a1a1" });
+    expect(context.store.get("outlines", row.outline!)).toMatchObject({ board: IDEAS });
+    expect(context.store.get("links", "p2b2b2b2b2b2")).toMatchObject({ from: ROOT, outline: made.outlineId });
+    // Undo, then move the whole outline (its frame) into a new board: the outline record moves.
+    context.history.undo();
+    const target = context.store.get("links", "p2b2b2b2b2b2") as PlaceLink;
+    context.history.run({ label: "Out", ops: [makeOp("links", target.id, target, { ...target, outline: undefined, parent: undefined, rank: undefined })] });
+    context.history.run(moveIntoBoard(context, [], IDEAS, [made.outlineId!]));
+    expect(context.store.get("outlines", made.outlineId!)).toMatchObject({ board: IDEAS });
+    expect(context.store.get("links", "p4d4d4d4d4d4")).toMatchObject({ from: IDEAS, outline: made.outlineId, parent: "p1a1a1a1a1a1" });
+    expect(context.graph.membersOf(made.outlineId!).map((place) => place.id).sort()).toEqual(["p1a1a1a1a1a1", "p4d4d4d4d4d4"]);
+  });
+
   it("does not move a board into itself", () => {
     const context = loadTestContext();
     expect(moveIntoBoard(context, ["p2b2b2b2b2b2"], IDEAS).ops).toEqual([]);
@@ -265,12 +306,35 @@ describe("small items in a page", () => {
     expect(context.store.get("items", itemId)!.pageAt).toEqual([12, -31]);
     expect(schemaErrors("items", context.store.get("items", itemId))).toEqual([]);
     expect(schemaErrors("items", { ...before, pageAt: [1] })).toHaveLength(1);
-    const reloaded = decodeVault(encodeVault(context.store, { format: 1, root: ROOT }));
+    const reloaded = decodeVault(encodeVault(context.store, { format: 2, root: ROOT }));
     expect(reloaded.problems.filter((problem) => problem.severity === "error")).toEqual([]);
     expect(reloaded.store.get("items", itemId)!.pageAt).toEqual([12, -31]);
     context.history.run(setPageAt(context, itemId, null));
     expect(context.store.get("items", itemId)).toEqual(before);
     context.history.undo();
     expect(context.store.get("items", itemId)!.pageAt).toEqual([12, -31]);
+  });
+});
+
+describe("page subtitle", () => {
+  it("sets and removes a subtitle; it is saved, found, exported, and makes a folded card taller", async () => {
+    const { setItemSubtitle } = await import("../src/core/actions");
+    const { searchBoard } = await import("../src/core/search");
+    const { linearize } = await import("../src/core/linearize");
+    const { cardHeight, COLLAPSED_HEIGHT, SUBTITLE_HEIGHT } = await import("../src/ui/board/boardModel");
+    const context = loadTestContext();
+    context.history.run(setItemSubtitle(context, TOOL_RESEARCH, "  notes   from *2024* "));
+    expect(context.store.get("items", TOOL_RESEARCH)?.subtitle).toBe("notes from *2024*");
+    expect(setItemSubtitle(context, TOOL_RESEARCH, "notes from *2024*").ops).toEqual([]);
+    const { store, problems } = decodeVault(encodeVault(context.store, { format: 2, root: ROOT }));
+    expect(problems.filter((problem) => problem.severity === "error")).toEqual([]);
+    expect(store.get("items", TOOL_RESEARCH)?.subtitle).toBe("notes from *2024*");
+    expect(searchBoard(context.store, context.graph, ROOT, "notes from")).toContainEqual(expect.objectContaining({ recordId: TOOL_RESEARCH, field: "subtitle" }));
+    expect(linearize(context.store, context.graph, ROOT)).toContain("*notes from \\*2024\\**");
+    const place = context.store.get("links", "p1a1a1a1a1a1") as PlaceLink;
+    expect(cardHeight(context.store, context.graph, place)).toBe(COLLAPSED_HEIGHT + SUBTITLE_HEIGHT);
+    context.history.run(setItemSubtitle(context, TOOL_RESEARCH, " "));
+    expect(context.store.get("items", TOOL_RESEARCH)?.subtitle).toBeUndefined();
+    expect(cardHeight(context.store, context.graph, place)).toBe(COLLAPSED_HEIGHT);
   });
 });

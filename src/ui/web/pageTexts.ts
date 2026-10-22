@@ -1,12 +1,11 @@
 // The texts of saved web pages and PDFs, for the board search (⌘F). See docs/SPEC.md section 7.4.
-// - A link object with a copy in the vault (web/<link object ID>.html or .pdf; older vaults: the shared copy of its
-//   address, web/<hash>.*) is searched in its page text.
+// - A link object with a copy in the vault (web/<link object ID>.html or .pdf) is searched in its page text.
 // - The app reads the files when a search opens and keeps the texts in memory while the vault is open (no cache file).
 //   A page that is saved again is read again.
 
 import type { Id } from "../../core/types";
 import type { Session } from "../../io/session";
-import { isWebUrl, pagePath, pdfPath, webKey } from "./savedPages";
+import { pagePath, pdfPath } from "./savedPages";
 
 const caches = new WeakMap<Session, Map<string, Promise<string | null>>>();
 
@@ -44,27 +43,25 @@ async function readText(session: Session, key: string): Promise<string | null> {
   }
 }
 
+/** The page text of one link object with a saved page or PDF, or null if it has none. */
+export function savedPageText(session: Session, itemId: Id): Promise<string | null> {
+  const cache = cacheOf(session);
+  let text = cache.get(itemId);
+  if (text === undefined) {
+    text = readText(session, itemId);
+    cache.set(itemId, text);
+  }
+  return text;
+}
+
 /** The page texts of all link objects with a saved page, by the ID of the link object. */
 export async function savedPageTexts(session: Session): Promise<Map<Id, string>> {
-  const cache = cacheOf(session);
   const result = new Map<Id, string>();
   await Promise.all(
     [...session.store.all("items")].map(async (item) => {
       if (item.url === undefined || item.url === "") return;
-      // Its own copy first, then the old shared copy of its address.
-      const keys = isWebUrl(item.url) ? [item.id, await webKey(item.url)] : [item.id];
-      for (const key of keys) {
-        let text = cache.get(key);
-        if (text === undefined) {
-          text = readText(session, key);
-          cache.set(key, text);
-        }
-        const value = await text;
-        if (value !== null && value !== "") {
-          result.set(item.id, value);
-          return;
-        }
-      }
+      const value = await savedPageText(session, item.id);
+      if (value !== null && value !== "") result.set(item.id, value);
     }),
   );
   return result;

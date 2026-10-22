@@ -42,6 +42,8 @@ impl KnownFiles {
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct FileChange {
+    /// The vault folder: each window takes only the changes of its own vault.
+    pub root: String,
     pub path: String,
     /// `None` if the file was deleted or is not valid UTF-8.
     pub content: Option<String>,
@@ -82,7 +84,7 @@ fn check(root: &Path, full: &Path, known: &Arc<Mutex<KnownFiles>>) -> Option<Fil
     }
     let content = bytes.as_ref().and_then(|data| String::from_utf8(data.clone()).ok());
     let unreadable = bytes.is_some() && content.is_none();
-    Some(FileChange { path: relative, content, unreadable })
+    Some(FileChange { root: root.to_string_lossy().to_string(), path: relative, content, unreadable })
 }
 
 fn hash_of(content: &[u8]) -> u64 {

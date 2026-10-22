@@ -114,10 +114,10 @@ export function exportBundle(store: Store, graph: GraphIndex, boardId: Id, words
   };
 }
 
-/** The vault images that the records use: backgrounds and images in texts. */
+/** The vault images that the records use: the images of items (see mapItemImages) and images in texts. */
 export function imagesOf(store: Store): string[] {
   const paths = new Set<string>();
-  for (const item of store.all("items")) if (item.background?.startsWith("images/") === true) paths.add(item.background);
+  for (const item of store.all("items")) mapItemImages(item, (path) => (paths.add(path), path));
   for (const text of store.all("texts")) for (const match of text.body.matchAll(TEXT_IMAGE)) paths.add(match[1]!);
   return [...paths].sort();
 }
@@ -163,8 +163,7 @@ export function importBundle(
       delete after.on;
       delete after.quote;
     }
-    if (after.background?.startsWith("images/") === true) after.background = image(after.background);
-    ops.push(makeOp("items", after.id, null, after));
+    ops.push(makeOp("items", after.id, null, mapItemImages(after, image)));
   }
   for (const text of source.all("texts")) {
     if (!source.has("items", text.id)) continue;
@@ -194,6 +193,22 @@ export function importBundle(
   ops.push(makeOp("links", placeId, null, home));
   const name = source.get("items", bundle.root)?.name ?? "";
   return { command: { label: `Import board${name !== "" ? ` "${name}"` : ""}`, ops }, rootId };
+}
+
+/**
+ * The one list of item fields that hold a vault image: the background, and the cover and picture of a media item.
+ * A copy of the item with each image path changed (`change` sees every path). A new image field goes here.
+ */
+function mapItemImages(item: ItemRecord, change: (path: string) => string): ItemRecord {
+  const map = (path: string | undefined) => (path?.startsWith("images/") === true ? change(path) : path);
+  const after: ItemRecord = { ...item };
+  if (after.background !== undefined) after.background = map(after.background);
+  if (after.media !== undefined) {
+    after.media = { ...after.media };
+    if (after.media.cover !== undefined) after.media.cover = map(after.media.cover);
+    if (after.media.file !== undefined) after.media.file = map(after.media.file);
+  }
+  return after;
 }
 
 function remapLink(link: LinkRecord, source: Store, newId: (id: Id) => Id): LinkRecord | null {

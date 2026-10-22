@@ -5,6 +5,7 @@
 import { Copy, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { findDuplicates, firstSentence } from "../../core/duplicates";
+import { ancestorsOf } from "../../core/lineage";
 import type { Id } from "../../core/types";
 import { useSession } from "../app/sessionContext";
 import { useWorkspaceActions } from "../app/workspaceActions";
@@ -19,7 +20,12 @@ export function DuplicateWarning({ itemId }: { itemId: Id }) {
   const body = session.store.get("texts", itemId)?.body ?? "";
   const sentence = firstSentence(body);
   // Only a change of the first sentence searches again.
-  const others = useMemo(() => (sentence === null ? [] : findDuplicates(session.store, itemId, body)), [sentence, itemId, session]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Copies in a lineage (SPEC 7.16) are copies on purpose: items made from this one, or that it was made from, do not count.
+  const others = useMemo(() => {
+    if (sentence === null) return [];
+    const ancestors = ancestorsOf(session.store, itemId);
+    return findDuplicates(session.store, itemId, body).filter((other) => !ancestors.has(other) && !ancestorsOf(session.store, other).has(itemId));
+  }, [sentence, itemId, session]); // eslint-disable-line react-hooks/exhaustive-deps
   const key = `${itemId}\u0000${sentence ?? ""}`;
   if (others.length === 0 || dismissed.has(key)) return null;
   const other = others[0]!;

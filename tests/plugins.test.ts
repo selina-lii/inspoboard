@@ -113,6 +113,9 @@ describe("view overlay", () => {
     expect([...hidden.values()].every((entry) => !entry.shown)).toBe(true);
     expect(isFresh(session.store, hidden.get(IDEAS), "upper", "k", IDEAS)).toBe(true);
     expect(isFresh(session.store, hidden.get(IDEAS), "upper", "other options", IDEAS)).toBe(false);
+    // Only the text so far of a call that did not end: a new run makes it again.
+    const partial = withResults(hidden, "upper", "k", [{ id: IDEAS, field: "title" }], ["PART"], [session.store.get("items", IDEAS)!.name], true);
+    expect(isFresh(session.store, partial.get(IDEAS), "upper", "k", IDEAS)).toBe(false);
     expect(withShown(hidden, [IDEAS], true).get(IDEAS)!.shown).toBe(true);
   });
 

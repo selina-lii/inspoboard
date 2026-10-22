@@ -5,6 +5,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Backend, PluginHost } from "../../io/backend";
 import { NotAVaultError, Session } from "../../io/session";
 import { PluginHostProvider } from "../plugins/pluginsContext";
+import { useFileDrop } from "./fileDrop";
+import { useSessionLog } from "./debugLog";
 import { SessionProvider } from "./sessionContext";
 import { Workspace } from "./Workspace";
 import { t } from "../i18n/i18n";
@@ -38,6 +40,11 @@ export function App({ backend, plugins }: Props) {
   const open = useCallback(
     async (folder: string, create = false) => {
       try {
+        // A vault that a different window shows: that window comes to the front, and this one stays as it is.
+        if (await backend.focusVaultWindow(folder).catch(() => false)) {
+          if (sessionRef.current === null) setPicker({ kind: "choose", error: t("This vault is open in a different window.") });
+          return;
+        }
         await closeCurrent();
         const opened = await Session.open(backend, folder, { create });
         sessionRef.current = opened;
@@ -54,6 +61,12 @@ export function App({ backend, plugins }: Props) {
     const folder = await backend.chooseFolder(t("Open a vault folder"));
     if (folder !== null) await open(folder);
   }, [backend, open]);
+
+  /** Vault › Open Vault in New Window: the vault opens in a new window; this window stays as it is. */
+  const chooseForWindow = useCallback(async () => {
+    const folder = await backend.chooseFolder(t("Open a vault folder"));
+    if (folder !== null) await backend.openVaultWindow(folder).catch((error: unknown) => window.alert(String(error)));
+  }, [backend]);
 
   const chooseAndCreate = useCallback(async () => {
     const folder = await backend.chooseFolder(t("Select a folder for the new vault"));
@@ -90,12 +103,18 @@ export function App({ backend, plugins }: Props) {
   useEffect(() => {
     const stop = backend.onMenu((id) => {
       if (id === "vault-open") void chooseAndOpen();
+      if (id === "vault-window") void chooseForWindow();
       if (id === "vault-new") void chooseAndCreate();
       if (id === "vault-close") void closeCurrent().then(() => setPicker({ kind: "choose" }));
       if (id === "view-zen") setZenRequest((count) => count + 1);
+      if (id === "vault-log") void backend.logPath().then((path) => (path === null ? undefined : backend.revealFile(path)));
     });
     return () => void stop.then((unlisten) => unlisten());
-  }, [backend, chooseAndOpen, chooseAndCreate, closeCurrent]);
+  }, [backend, chooseAndOpen, chooseForWindow, chooseAndCreate, closeCurrent]);
+  // Files dropped from the system: see fileDrop.ts.
+  useFileDrop(backend);
+  // The session log (Vault › Show Session Log in Finder): see debugLog.ts.
+  useSessionLog(backend);
 
   if (session !== null) {
     return (

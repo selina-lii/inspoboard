@@ -2,7 +2,7 @@
 // While the scribble tool is on, the tool bar shows them. The choice is the vault setting "scribbleColor".
 // The right-click menu of a scribble recolors it (the color of its place link).
 
-import { INK } from "../windows/marks";
+import { INK } from "../web/readerBasics";
 import { useSession, useSessionState } from "../app/sessionContext";
 
 /** The ink colors, after the theme ink. */

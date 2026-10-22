@@ -55,6 +55,8 @@ export function linearize(store: Store, graph: GraphIndex, rootId: Id, options: 
       blocks.push(lines.join("\n"));
     } else {
       blocks.push(`${heading} ${prefix}${number === "" ? "" : `${number} `}${nameOf(id)}`);
+      const subtitle = store.get("items", id)?.subtitle;
+      if (subtitle !== undefined) blocks.push(`*${subtitle.replace(/([*_\\])/g, "\\$1")}*`);
       if (body.trim() !== "") blocks.push(body.trimEnd());
     }
     // Attached objects and small items inside the item follow the text: links as a list, comments (and notes) as

@@ -9,6 +9,7 @@ import type { BackupEntry } from "../../io/backend";
 import { t, uiLocale } from "../i18n/i18n";
 import { MovablePanel } from "./movable";
 import { useSession, useSessionState } from "./sessionContext";
+import { useDismiss } from "./useDismiss";
 
 type Status = { kind: "busy" } | { kind: "done"; path: string; bytes: number; over: boolean } | { kind: "error"; message: string } | null;
 
@@ -70,18 +71,7 @@ export function BackupButton({ backup, button = true, open: shown, setOpen: setS
   };
   const frame = useRef<HTMLSpanElement>(null);
   // A click outside closes the menu (not during a confirmation dialog: it takes no pointer events here).
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (event: PointerEvent) => frame.current !== null && !frame.current.contains(event.target as Node) && setOpen(false);
-    const onKey = (event: KeyboardEvent) => event.key === "Escape" && setOpen(false);
-    window.addEventListener("pointerdown", onPointerDown);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("pointerdown", onPointerDown);
-      window.removeEventListener("keydown", onKey);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  useDismiss(open, frame, () => setOpen(false));
   return (
     <span className="plugin-menu" ref={frame}>
       {button && (

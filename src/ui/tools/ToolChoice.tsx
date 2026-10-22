@@ -6,6 +6,7 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { TOOL_SUBMENUS, type Tool, type ToolId, type ToolSubmenu } from "./registry";
+import { useDismiss } from "../app/useDismiss";
 
 type Props = {
   label: string;
@@ -27,21 +28,9 @@ export function ToolChoice({ label, tools, active, sticky, disabled, onChoose }:
     if (current !== undefined) setLast(current.id);
   }, [current]);
   useEffect(() => {
-    if (!open) {
-      setSub(null);
-      return;
-    }
-    const onPointerDown = (event: PointerEvent) => {
-      if (frame.current !== null && !frame.current.contains(event.target as Node)) setOpen(false);
-    };
-    const onKeyDown = (event: KeyboardEvent) => event.key === "Escape" && setOpen(false);
-    window.addEventListener("pointerdown", onPointerDown);
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener("pointerdown", onPointerDown);
-      window.removeEventListener("keydown", onKeyDown);
-    };
+    if (!open) setSub(null);
   }, [open]);
+  useDismiss(open, frame, () => setOpen(false));
   const row = (tool: Tool) => (
     <button
       key={tool.id}

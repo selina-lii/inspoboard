@@ -2,16 +2,17 @@
 // - An outline (outline.ts) shows its cards as an aligned list.
 // - A calendar shows a month grid (Sunday first, like Google Calendar). Each card is on one day. The user scrolls through the months.
 // Groups are one level below the board: in a document, a board name is a title and a group name a subtitle.
-// The shown month of a calendar is view state (not saved). The range of months is saved.
+// The shown day of a calendar is view state (not saved). The range of months and the view (week, month, year) are saved.
 
 import { makeOp, type Command, type Op } from "./commands";
 import { ENGLISH, type Words } from "./words";
 import type { ActionContext } from "./actions";
 import type { GraphIndex } from "./graph";
+import { radialMembers } from "./radial";
 import { outlineRows } from "./outline";
 import type { Store } from "./store";
 import { createItemOnBoard } from "./actions";
-import type { Id, ItemRecord, OutlineRecord, PlaceLink, ViewStyle } from "./types";
+import type { CalendarView, Id, ItemRecord, OutlineRecord, PlaceLink, ViewStyle } from "./types";
 
 export const CALENDAR = {
   /** Size of one day. */
@@ -108,6 +109,180 @@ export function dayAt(calendar: OutlineRecord, month: string, point: { x: number
   const row = Math.floor((point.y - calendar.y - CALENDAR.bar - CALENDAR.weekdays) / CALENDAR.cellH);
   if (column < 0 || column > 6 || row < 0 || row > 5) return null;
   return gridDays(month)[row * 7 + column] ?? null;
+}
+
+/** The view of a calendar: week, month (the default), or year. */
+export function calendarViewOf(calendar: OutlineRecord | undefined): CalendarView {
+  return calendar?.view ?? "month";
+}
+
+/** Sets the view of a calendar (week, month, year). The month view is the default: it removes the field. One command. */
+export function setCalendarView(context: ActionContext, calendarId: Id, view: CalendarView): Command {
+  const before = context.store.get("outlines", calendarId);
+  if (before === undefined || calendarViewOf(before) === view) return { label: "Calendar view", ops: [] };
+  const after: OutlineRecord = { ...before, view };
+  if (view === "month") delete after.view;
+  return { label: "Calendar view", ops: [makeOp("outlines", calendarId, before, after)] };
+}
+
+/** The week view: a column for each day, a strip for all-day and multi-day cards, and an hour grid (0 to 24). */
+export const WEEK = {
+  /** The column at the left with the hours. */
+  gutter: 42,
+  cellW: 144,
+  /** The row with the weekdays and their dates. */
+  head: 28,
+  /** The height of one lane of the all-day strip, and the space under the strip. */
+  lane: 32,
+  stripPad: 8,
+  hourH: 36,
+} as const;
+
+/** The year view: 12 small months, 4 columns and 3 rows. */
+export const YEAR = {
+  cellW: 34,
+  cellH: 26,
+  /** The month name and the weekday letters of a small month. */
+  title: 22,
+  weekdays: 16,
+  gapX: 32,
+  gapY: 16,
+} as const;
+
+/** The size of a calendar frame in a view. `lanes`: the lanes of the all-day strip of the week view (at least one). */
+export function calendarFrameSize(view: CalendarView, lanes = 1): { w: number; h: number } {
+  const w = 7 * CALENDAR.cellW + 2 * CALENDAR.pad;
+  if (view === "week") return { w, h: CALENDAR.bar + WEEK.head + weekStripHeight(lanes) + 24 * WEEK.hourH + CALENDAR.pad };
+  if (view === "year") return { w, h: CALENDAR.bar + 3 * yearMonthHeight() + 2 * YEAR.gapY + CALENDAR.pad };
+  return calendarSize();
+}
+
+export function weekStripHeight(lanes: number): number {
+  return Math.max(1, lanes) * WEEK.lane + WEEK.stripPad;
+}
+
+export function yearMonthHeight(): number {
+  return YEAR.title + YEAR.weekdays + 6 * YEAR.cellH;
+}
+
+/** The Sunday of the week of a day. */
+export function weekStart(day: string): string {
+  return addDays(day, -new Date(`${day}T00:00:00Z`).getUTCDay());
+}
+
+/** The 7 days of the week of a day, Sunday first. */
+export function weekDays(day: string): string[] {
+  const first = weekStart(day);
+  return Array.from({ length: 7 }, (_, index) => addDays(first, index));
+}
+
+/** The months that a view of a day shows: its week (one or two months), its month, or the 12 months of its year. */
+export function monthsInView(view: CalendarView, day: string): string[] {
+  if (view === "week") return [...new Set(weekDays(day).map(monthOf))];
+  if (view === "year") return Array.from({ length: 12 }, (_, index) => `${day.slice(0, 4)}-${String(index + 1).padStart(2, "0")}`);
+  return [monthOf(day)];
+}
+
+/** The day that a calendar view shows after `step` periods (weeks, months, or years) from a day. */
+export function stepView(view: CalendarView, day: string, step: number): string {
+  if (view === "week") return addDays(weekStart(day), 7 * step);
+  const month = addMonths(monthOf(day), view === "year" ? 12 * step : step);
+  return `${month}-01`;
+}
+
+/**
+ * The title of a view, in parts (they show with " – " between them, each one translated alone): ["January 2026"],
+ * a week in two months ["January", "February 2026"] or two years ["December 2025", "January 2026"], a year ["2026"].
+ */
+export function viewTitle(view: CalendarView, day: string): string[] {
+  if (view === "year") return [day.slice(0, 4)];
+  if (view !== "week") return [monthTitle(monthOf(day))];
+  const days = weekDays(day);
+  const first = monthOf(days[0]!);
+  const last = monthOf(days[6]!);
+  if (first === last) return [monthTitle(first)];
+  return first.slice(0, 4) === last.slice(0, 4) ? [MONTH_NAMES[Number(first.slice(5)) - 1]!, monthTitle(last)] : [monthTitle(first), monthTitle(last)];
+}
+
+/** The top-left corner of small month `index` (0 to 11) of the year view, from the top-left corner of the frame. */
+export function yearMonthCorner(index: number): { x: number; y: number } {
+  return { x: CALENDAR.pad + (index % 4) * (7 * YEAR.cellW + YEAR.gapX), y: CALENDAR.bar + Math.floor(index / 4) * (yearMonthHeight() + YEAR.gapY) };
+}
+
+/**
+ * The place of a board point in a calendar view: the day, and in the hour grid of the week view the time (minutes from
+ * midnight, in steps of 15). `lanes`: the lanes of the all-day strip of the week view. In the month view, the days
+ * of the months before and after count too. Null: no day there.
+ */
+export function calendarPointAt(calendar: OutlineRecord, view: CalendarView, day: string, point: { x: number; y: number }, lanes = 1): { day: string; minutes: number | null } | null {
+  const x = point.x - calendar.x;
+  const y = point.y - calendar.y;
+  if (view === "week") {
+    const column = Math.floor((x - CALENDAR.pad - WEEK.gutter) / WEEK.cellW);
+    const top = CALENDAR.bar + WEEK.head;
+    if (column < 0 || column > 6 || y < top) return null;
+    const target = weekDays(day)[column]!;
+    const grid = top + weekStripHeight(lanes);
+    if (y < grid) return { day: target, minutes: null };
+    const minutes = Math.floor(((y - grid) / WEEK.hourH) * 4) * 15;
+    return minutes >= 24 * 60 ? null : { day: target, minutes };
+  }
+  if (view === "year") {
+    for (let index = 0; index < 12; index += 1) {
+      const corner = yearMonthCorner(index);
+      const column = Math.floor((x - corner.x) / YEAR.cellW);
+      const row = Math.floor((y - corner.y - YEAR.title - YEAR.weekdays) / YEAR.cellH);
+      if (column < 0 || column > 6 || row < 0 || row > 5) continue;
+      const month = `${day.slice(0, 4)}-${String(index + 1).padStart(2, "0")}`;
+      const target = gridDays(month)[row * 7 + column]!;
+      return target.startsWith(month) ? { day: target, minutes: null } : null;
+    }
+    return null;
+  }
+  const target = dayAt(calendar, monthOf(day), point);
+  return target === null ? null : { day: target, minutes: null };
+}
+
+/** "HH:MM" of minutes from midnight. */
+export function clockOf(minutes: number): string {
+  const clamped = Math.max(0, Math.min(24 * 60 - 1, Math.round(minutes)));
+  return `${String(Math.floor(clamped / 60)).padStart(2, "0")}:${String(clamped % 60).padStart(2, "0")}`;
+}
+
+/** The end of a card in minutes from midnight: its end time, else one hour after its start. -1: no time. */
+export function endMinutes(place: PlaceLink): number {
+  const start = startMinutes(place);
+  if (start < 0) return -1;
+  const match = /–(\d\d):(\d\d)$/.exec(place.time ?? "");
+  const end = match === null ? start + 60 : Number(match[1]) * 60 + Number(match[2]);
+  return end > start ? end : start + 60;
+}
+
+/**
+ * Puts cards on a day and a time of a calendar (a drop in the week view). `minutes`: the start (minutes from
+ * midnight); a card with an end time keeps its length. Null: all day (the time goes). A card on more than one day
+ * keeps its days and has no time. One command (as snapToDay, and the time).
+ */
+export function snapToTime(context: ActionContext, placeIds: readonly Id[], calendarId: Id, day: string, minutes: number | null): Command {
+  const command = snapToDay(context, placeIds, calendarId, day);
+  for (const placeId of placeIds) {
+    const current = context.store.get("links", placeId);
+    if (current?.kind !== "place") continue;
+    const op = command.ops.find((one) => one.table === "links" && one.id === placeId);
+    const base = (op?.after as PlaceLink | undefined) ?? current;
+    if (base.outline !== calendarId || base.until !== undefined) continue;
+    const after: PlaceLink = { ...base };
+    if (minutes === null) delete after.time;
+    else {
+      const start = Math.max(0, Math.min(24 * 60 - 15, minutes));
+      const ranged = /–/.test(current.time ?? "");
+      after.time = ranged ? `${clockOf(start)}–${clockOf(Math.min(24 * 60 - 1, start + endMinutes(current) - startMinutes(current)))}` : clockOf(start);
+    }
+    if (after.time === base.time) continue;
+    if (op !== undefined) op.after = after;
+    else command.ops.push(makeOp("links", placeId, current, after));
+  }
+  return command;
 }
 
 /** The cards of a calendar on each day, in the order of the links table. Stamps do not count. */
@@ -340,13 +515,13 @@ export function setCardSchedule(context: ActionContext, placeId: Id, schedule: C
 }
 
 /** Creates an item on a calendar day: named by the day (see dayName), with the day as its date. One command. */
-export function createOnDay(context: ActionContext, calendarId: Id, day: string, view: ViewStyle, options: { board?: boolean; author?: string } = {}): { command: Command; itemId: Id; placeId: Id } | null {
+export function createOnDay(context: ActionContext, calendarId: Id, day: string, view: ViewStyle, options: { board?: boolean; author?: string; time?: string } = {}): { command: Command; itemId: Id; placeId: Id } | null {
   const calendar = context.store.get("outlines", calendarId);
   if (calendar === undefined) return null;
   const created = createItemOnBoard(context, { boardId: calendar.board, view, x: calendar.x, y: calendar.y, name: dayName(day, view, options.board === true, takenNames(context.store)), board: options.board, author: options.author });
   for (const op of created.command.ops) {
     if (op.table === "items" && op.after !== null) (op.after as ItemRecord).date = day;
-    if (op.table === "links" && op.after !== null) Object.assign(op.after as PlaceLink, { outline: calendarId, day, expanded: true });
+    if (op.table === "links" && op.after !== null) Object.assign(op.after as PlaceLink, { outline: calendarId, day, expanded: true }, options.time === undefined ? {} : { time: options.time });
   }
   return created;
 }
@@ -376,6 +551,8 @@ export function boardGroupType(store: Store, graph: GraphIndex, boardId: Id): "o
   const groups = graph.outlinesOn(boardId);
   if (groups.length !== 1) return null;
   const group = groups[0]!;
+  // A radial is a graph, not a list: its board keeps the board look.
+  if (group.type === "radial") return null;
   const cards = graph.childrenOf(boardId).filter((place) => !store.has("stamps", place.to));
   if (!cards.every((place) => place.outline === group.id)) return null;
   if (cards.length === 0 && !isCalendar(group)) return null;
@@ -384,7 +561,7 @@ export function boardGroupType(store: Store, graph: GraphIndex, boardId: Id): "o
 
 /** A name for a group: its name, or its type. */
 export function groupTitle(group: OutlineRecord, words: Words = ENGLISH): string {
-  return group.name ?? (isCalendar(group) ? words("Calendar") : words("Outline"));
+  return group.name ?? (isCalendar(group) ? words("Calendar") : group.type === "radial" ? words("Radial") : words("Outline"));
 }
 
 /**
@@ -411,6 +588,12 @@ export function groupDocument(store: Store, graph: GraphIndex, groupId: Id, word
         if (name !== "" || when !== "") blocks.push(`### ${when}${name}`.trimEnd());
         if (bodyOf(place.to) !== "") blocks.push(bodyOf(place.to));
       }
+    }
+  } else if (group.type === "radial") {
+    // A radial: its cards, one after the other (they have no order of their own).
+    for (const place of radialMembers(store, graph, groupId)) {
+      if (nameOf(place.to) !== "") blocks.push(`## ${nameOf(place.to)}`);
+      if (bodyOf(place.to) !== "") blocks.push(bodyOf(place.to));
     }
   } else {
     for (const row of outlineRows(store, graph, groupId)) {

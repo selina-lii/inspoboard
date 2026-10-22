@@ -7,6 +7,8 @@ export type Id = string;
 export type ItemRecord = {
   id: Id;
   name: string;
+  /** A page: a second line under the name (gray, italic on the card). Missing: no subtitle. */
+  subtitle?: string;
   /** ISO 8601 time of creation in the app. */
   created: string;
   /** ISO 8601 time of the last change to the name or the body text. Missing until the first change. */
@@ -60,7 +62,41 @@ export type ItemRecord = {
   trashed?: string;
   /** Trash: the board and the card that the item was on, to put it back there ("Restore"). */
   trashedFrom?: TrashedFrom;
+  /** A multimedia item (SPEC 7.14): a picture, a song, or a video. Its card shows the cover, the name, and the artist. */
+  media?: MediaInfo;
+  /**
+   * A sorting map (built-in plugin "Sorting tray", SPEC 7.16): the collections that feed its tray. Each ID is a
+   * collection item (an item with its own board) or a group (an outline or a calendar).
+   */
+  sources?: Id[];
+  /** A sorting map: the items of its sources that the user threw away (the tray does not offer them). */
+  discarded?: Id[];
+  /** A sorting map: true if "Lost and found" is a source too (the items that the root board cannot reach). */
+  lostAndFound?: boolean;
+  /** A sorting map: true if it is a processing map (detached): its cards become copies (SPEC 7.16). */
+  detached?: boolean;
+  /**
+   * The items that this item was made from (a copy, or clips pasted into it), and the version of each one then
+   * (lineage, SPEC 7.16). A source whose current version is different makes this item outdated.
+   */
+  madeFrom?: MadeFrom[];
 };
+
+/** A source of an item: its ID, and its version when the item was made from it (or when the user accepted it). */
+export type MadeFrom = { from: Id; seen: string };
+
+/** The kinds of multimedia items. An album or a playlist is a group of media items (an outline or a group card). */
+export type MediaKind = "image" | "audio" | "video";
+export const MEDIA_KINDS: readonly MediaKind[] = ["image", "audio", "video"];
+
+/**
+ * A multimedia item (SPEC 7.14). The name of the item is its title.
+ * - `url`: the page of the item on its site (https); a click opens it in the browser.
+ * - `file`: a vault file of the item ("images/<name>" for a picture).
+ * - `cover`: the cover art, a vault image ("images/<name>").
+ * - `duration`: the length in seconds (songs and videos).
+ */
+export type MediaInfo = { kind: MediaKind; url?: string; file?: string; artist?: string; cover?: string; duration?: number };
 
 /** The last card of an item in the trash: its board, position, size, and card kind. */
 export type TrashedFrom = { board: Id; x: number; y: number; w: number; h: number; view: ViewStyle };
@@ -116,6 +152,11 @@ export type PlaceLink = {
   view: ViewStyle;
   /** 3D position. Missing until the user moves the record in 3D. */
   p3?: Point3;
+  /**
+   * Stubs of linked records that are not on this board (by the ID of the other record): where the user dragged
+   * each one, [x, y] from the top-right corner of the card. Missing: the default place, right of the card.
+   */
+  stubs?: Record<Id, [number, number]>;
   /** True if the card shows its text. A card that is not expanded shows only its name. */
   expanded?: boolean;
   /** Order among the rows of the same outline parent (0, 1, 2, ...). Older versions: order on the board. */
@@ -137,6 +178,8 @@ export type PlaceLink = {
   until?: string;
   /** A card at a time of its day: "HH:MM", or "HH:MM–HH:MM" (start and end). Only on one day (no `until`). */
   time?: string;
+  /** A card of a radial that the user put in place by hand: its offset [x, y, z] from the center of the core. */
+  offset?: [number, number, number];
   /** A quote card: its quotation marks. Missing: from the text (CJK text 「 」, else ‘ ’). */
   marks?: QuoteMarks;
   /** A group card: its shape. Missing: a rounded rectangle. */
@@ -186,6 +229,10 @@ export type RelationLink = {
   to: Id;
   label?: string;
   group?: string;
+  /** Line color "#rrggbb". Missing: the color of the group (or the default line color). */
+  color?: string;
+  /** True: a dashed line. Missing: a solid line. */
+  dashed?: boolean;
   /** Cap at the `from` end. Missing means "none". */
   start?: LinkCap;
   /** Cap at the `to` end. Missing means "arrow". */
@@ -201,6 +248,8 @@ export type RelationLink = {
    * its body instead.
    */
   fromQuote?: string;
+  /** A link made from text (a passage at an end): true shows it on boards and in the galaxy too, as a dashed gray line. Missing: only in its items. */
+  onBoard?: boolean;
 };
 
 /**
@@ -257,13 +306,15 @@ export type StampRecord = {
  */
 export type OutlineRecord = {
   id: Id;
-  /** "calendar", or missing for an outline. */
+  /** "calendar", "radial" (a core with cards around it, SPEC 7.17), or missing for an outline. */
   type?: GroupType;
   /** The name of the group. Missing: no name. */
   name?: string;
   /** Calendar: the first and the last month that it shows, "YYYY-MM". */
   start?: string;
   end?: string;
+  /** Calendar: the view, "week" or "year" (as in Google Calendar). Missing: the month view. */
+  view?: CalendarView;
   /** The board that holds the outline. */
   board: Id;
   /** Top-left corner of the outline on the board. */
@@ -273,10 +324,16 @@ export type OutlineRecord = {
   list?: ListStyle;
   /** "horizontal": top rows go from left to right, and their child rows go down under them. Missing: vertical. */
   direction?: OutlineDirection;
+  /** Radial: the radius of the ball of cards (board units). Missing: 260. */
+  radius?: number;
+  /** Radial: the seed of the spread ("Spread again" changes it). Missing: 1. */
+  seed?: number;
 };
 
 export type OutlineDirection = "vertical" | "horizontal";
-export type GroupType = "calendar";
+export type GroupType = "calendar" | "radial";
+export type CalendarView = "week" | "month" | "year";
+export const CALENDAR_VIEWS: readonly CalendarView[] = ["week", "month", "year"];
 
 /** Maps each table name to the type of its records. */
 export type TableRecords = {

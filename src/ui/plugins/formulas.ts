@@ -5,7 +5,7 @@
 //   opening $, no space before the closing $, and no digit right after the closing $).
 // - Web pages give their formulas from the page (MathML, with the LaTeX source if the page has it). See webText.ts.
 
-import type { Sentence } from "../../io/plugins";
+import type { Sentence, SpeechPart } from "../../io/plugins";
 
 export type Formula = { start: number; end: number; tex?: string; mathml?: string; display: boolean };
 
@@ -92,16 +92,37 @@ export function speakFormulas(text: string, sentences: readonly Sentence[], form
   });
   return rows.map((row) => {
     if (row.formulas.length === 0) return { start: row.start, end: row.end, speech: row.speech };
-    let speech = "";
-    let at = row.start;
-    for (const index of [...row.formulas].sort((a, b) => formulas[a]!.start - formulas[b]!.start)) {
-      const formula = formulas[index]!;
-      speech += text.slice(at, Math.max(at, formula.start));
-      const said = words[index]?.trim() ?? "";
-      speech += ` ${said !== "" ? said : (formula.tex ?? text.slice(formula.start, formula.end))} `;
-      at = Math.max(at, formula.end);
-    }
-    speech += text.slice(at, row.end);
-    return { start: row.start, end: row.end, speech: speech.replace(/\s+/g, " ").trim() };
+    const said = row.formulas.map((index) => ({ ...formulas[index]!, words: words[index] ?? "" }));
+    return { start: row.start, ...formulaSentence(text, row.start, row.end, said) };
   });
+}
+
+/**
+ * The words of the text from `start` to `end` with formulas in it, in parts (a formula is its own part: the voice
+ * says it slower). A formula said as its words; with no words (an error) as its LaTeX, else its text. A formula that
+ * starts before `start` was said in the sentence before: its text here is left out. `end`: the end of the range
+ * (a formula that runs past it is said here, whole).
+ */
+export function formulaSentence(text: string, start: number, end: number, formulas: readonly (Formula & { words: string })[]): { end: number; speech: string; parts: SpeechPart[] } {
+  const parts: SpeechPart[] = [];
+  const add = (value: string, formula: boolean) => {
+    const clean = value.replace(/\s+/g, " ").trim();
+    if (clean !== "") parts.push({ text: clean, formula });
+  };
+  let at = start;
+  let last = end;
+  for (const formula of [...formulas].sort((a, b) => a.start - b.start)) {
+    if (formula.end <= at) continue;
+    if (formula.start < start) {
+      at = Math.max(at, formula.end);
+      continue;
+    }
+    add(text.slice(at, Math.max(at, formula.start)), false);
+    const said = formula.words.trim();
+    add(said !== "" ? said : (formula.tex ?? text.slice(formula.start, formula.end)), true);
+    at = Math.max(at, formula.end);
+    last = Math.max(last, formula.end);
+  }
+  add(text.slice(at, Math.max(at, last)), false);
+  return { end: last, speech: parts.map((part) => part.text).join(" "), parts };
 }

@@ -32,8 +32,10 @@
 .card.view-note .child-count { background: rgba(0, 0, 0, 0.12); color: var(--note-text); }
 /* A note edits its text in place, on the yellow paper: no edit box. */
 .card.view-note .card-body-input { background: transparent; border: none; color: inherit; padding: 0; outline: none; font: inherit; line-height: 1.45; }
-/* A note that is edited grows to the sticky note size (never larger), over its neighbors. */
-.card.view-note.note-editing { width: max(100%, 200px); height: max(100%, 160px); max-width: 200px; max-height: 160px; position: relative; z-index: 5; }
+/* An open note fits all its text: at least the height of its node (min-height in the node style). */
+.card.view-note { min-height: inherit; }
+/* A note that is edited is at least the sticky note size, over its neighbors. Its text field grows with the text. */
+.card.view-note.note-editing { width: max(100%, 200px); max-width: 200px; min-height: 160px; position: relative; z-index: 5; }
 .card.view-note .card-title-input { background: rgba(255, 255, 255, 0.5); color: var(--note-text); border-color: var(--note-border); }
 .card.view-note.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 2px 8px rgba(0, 0, 0, 0.35); }
 .card.view-note.ghost { background: transparent; color: var(--text-muted); border-color: var(--text-faint); }
@@ -158,6 +160,13 @@
 .card.collapsed { padding: 0 6px; justify-content: center; }
 .card-title { min-height: 24px; }
 .card-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A page subtitle: a second line under the name, like the source of a quote (gray, italic, smaller). */
+.card-subtitle { flex: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: -4px; font-size: 11.5px; font-style: italic; color: var(--text-muted); line-height: 16px; }
+.card.custom-color .card-subtitle { color: inherit; opacity: 0.7; }
+.card-subtitle .card-subtitle-input { width: 100%; min-width: 140px; height: 16px; padding: 0 4px; font-style: italic; font-size: 11.5px; }
+/* A folded card with a subtitle: two lines, centered together. */
+.card.collapsed.has-subtitle { gap: 0; }
+.card.collapsed.has-subtitle .card-subtitle { margin-top: -2px; }
 .card-icon {
   display: inline-flex;
   align-items: center;
@@ -173,7 +182,9 @@
 .card.collapsed { width: max-content; max-width: 320px; min-width: 0; height: 100%; }
 .card.collapsed .card-name { flex: 0 1 auto; }
 /* A page with open comments: a pink dot at its top-right corner. */
-.comment-dot { position: absolute; top: 3px; right: 3px; width: 8px; height: 8px; pointer-events: auto; border-radius: 50%; background: #ff2bd6; box-shadow: 0 0 0 2px var(--bg); z-index: 2; }
+/* ".card > .comment-dot" is stronger than the general "[data-tip] { position: relative }", so the dot never goes
+   into the card's flex row (there it was made narrow or flat). flex: none and box-sizing keep it a full circle. */
+.card > .comment-dot { position: absolute; top: 3px; right: 3px; flex: none; box-sizing: content-box; width: 8px; height: 8px; min-width: 8px; min-height: 8px; padding: 0; pointer-events: auto; border-radius: 50%; background: #ff2bd6; box-shadow: 0 0 0 2px var(--bg); z-index: 2; }
 /* An open page card shows its whole name: a long name wraps. */
 .card.view-page:not(.collapsed) .card-title { align-items: flex-start; }
 .card.view-page:not(.collapsed) .card-name { white-space: normal; overflow-wrap: anywhere; }
@@ -243,8 +254,6 @@
   background: rgba(138, 146, 242, 0.04);
 }
 .outline-frame.selected { border-color: var(--accent); border-style: solid; }
-.outline-frame.shape-edit { border-color: var(--accent); border-style: solid; }
-.shape-done { position: absolute; right: 8px; bottom: -30px; padding: 2px 10px; border-radius: 6px; border: 1px solid var(--accent); background: var(--accent); color: #fff; font-size: 12px; cursor: pointer; }
 .outline-frame.drop-target { border-color: var(--accent); background: var(--accent-soft); }
 .outline-bar { height: 26px; display: flex; align-items: center; gap: 6px; padding: 0 8px; color: var(--text-faint); cursor: grab; }
 .outline-tools { display: inline-flex; gap: 2px; opacity: 0; transition: opacity 0.12s; }
@@ -259,7 +268,9 @@
 .card.custom-color .card-icon,
 .card.custom-color .card-type,
 .card.custom-color .untitled,
-.card.custom-color .outline-marker { color: inherit; opacity: 0.75; }
+.card.custom-color .outline-marker,
+.card.custom-color .weblink-icon,
+.card.custom-color .quote-mark { color: inherit; opacity: 0.75; }
 .card.custom-color.view-page { background-image: none !important; }
 .note-collapse { position: absolute; top: 4px; right: 4px; z-index: 1; }
 .note-name { position: absolute; top: 4px; right: 26px; z-index: 1; }
@@ -347,7 +358,41 @@
 .calendar-cell.outside { background: rgba(0, 0, 0, 0.1); }
 .calendar-cell.outside .calendar-day { opacity: 0.5; }
 .calendar-cell.today .calendar-day { background: #4a90ff; color: #fff; }
-.calendar-day { position: absolute; top: 3px; left: 5px; font-size: 11px; color: var(--text-muted); border-radius: 8px; padding: 0 5px; line-height: 16px; }
+.calendar-day { position: absolute; top: 3px; left: 5px; font-size: 11px; color: var(--text-muted); border-radius: 8px; padding: 0 5px; line-height: 16px;; border: 0; background: none; font-family: inherit; cursor: pointer; }
+.calendar-day:hover { background: rgba(74, 144, 255, 0.25); color: var(--text); }
+/* The view switch (Week, Month, Year) and Today in the bar of a calendar. */
+.calendar-views { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.calendar-views button, .calendar-today { border: 0; background: none; color: var(--text-muted); font: inherit; font-size: 11px; padding: 2px 8px; cursor: pointer; }
+.calendar-views button + button { border-left: 1px solid var(--border); }
+.calendar-views button.on { background: rgba(74, 144, 255, 0.3); color: var(--text); }
+.calendar-views button:hover, .calendar-today:hover { color: var(--text); }
+.calendar-today { border: 1px solid var(--border); border-radius: 6px; }
+/* The week view: the weekday row, the all-day strip, and the hour grid. Lines are inset shadows: they take no room,
+   so the cells keep the sizes that the cards use (WEEK in core/groups.ts). */
+.week-head { display: grid; }
+.week-head span { padding-left: 6px; }
+.week-head b { font-weight: 600; color: var(--text); margin-left: 2px; }
+.week-head .today b { background: #4a90ff; color: #fff; border-radius: 8px; padding: 0 5px; }
+.week-strip, .week-hours { display: grid; flex: none; }
+.week-strip { box-shadow: inset 0 -2px 0 var(--border); }
+.week-strip-day, .week-cell { box-shadow: inset -1px -1px 0 var(--border); }
+.week-strip-day.weekend, .week-cell.weekend { background: rgba(255, 255, 255, 0.02); }
+.week-cell.today { background: rgba(74, 144, 255, 0.06); }
+.week-hours { position: relative; }
+.week-hour { font-size: 10px; color: var(--text-faint); text-align: right; padding-right: 6px; transform: translateY(-6px); font-variant-numeric: tabular-nums; }
+.week-strip .week-hour { transform: none; align-self: center; }
+.week-now { position: absolute; height: 2px; background: #ff4a4a; pointer-events: none; }
+/* The year view: 12 small months (YEAR in core/groups.ts). */
+.year-month { position: absolute; }
+.year-month.outside { opacity: 0.45; }
+.year-month-name { display: block; border: 0; background: none; padding: 0 4px; font: inherit; font-size: 13px; font-weight: 600; color: var(--text); cursor: pointer; text-align: left; }
+.year-month-name:hover { color: #4a90ff; }
+.year-weekdays, .year-days { display: grid; }
+.year-weekdays span { font-size: 10px; color: var(--text-faint); text-align: center; text-transform: uppercase; }
+.year-day { border: 0; background: none; font: inherit; font-size: 11px; color: var(--text-muted); border-radius: 50%; cursor: pointer; margin: 2px 5px; font-variant-numeric: tabular-nums; }
+.year-day:hover { background: rgba(74, 144, 255, 0.25); color: var(--text); }
+.year-day.busy { color: var(--text); font-weight: 700; text-decoration: underline 2px #4a90ff; text-underline-offset: 3px; }
+.year-day.today { background: #4a90ff; color: #fff; }
 /* A card in a calendar day has the size of its day. */
 .card.in-calendar.collapsed { width: 100%; max-width: none; }
 /* The tools of a card: in the title row. In a calendar day, the card is narrow: they lie over its top-right corner,
@@ -383,10 +428,12 @@
 
 /* Quote card: newsprint paper, dark gray serif text, framed by quotation marks (nodes.tsx QuoteCard).
    Slim by default (small top and bottom edges); the height grows with the text. */
-.card.view-quote { height: auto; background: #f4eed9; border-color: #e2d7b4; color: #3b3a36; padding: 12px 34px 9px; gap: 4px; justify-content: center; font-family: "PT Serif", "Songti SC", "Songti TC", "Hiragino Mincho ProN", Georgia, serif; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25); }
+.card.view-quote { background: #f4eed9; border-color: #e2d7b4; color: #3b3a36; padding: 12px 34px 9px; gap: 4px; justify-content: center; font-family: "PT Serif", "Songti SC", "Songti TC", "Hiragino Mincho ProN", Georgia, serif; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25); }
 .card.view-quote.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 2px 8px rgba(0, 0, 0, 0.25); }
 .card.view-quote.quote-marks-none { padding-inline: 18px; }
 .quote-text { font-size: 14px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* A quote has the size that the user gives it: a longer text scrolls. */
+.card.view-quote .quote-text { min-height: 0; overflow: auto; }
 .quote-source { font-size: 11.5px; color: #7a7465; font-style: italic; text-align: right; overflow-wrap: anywhere; }
 .quote-source:lang(zh), .quote-source:lang(ja) { font-style: normal; }
 .quote-mark { position: absolute; color: #c9b98a; line-height: 1; pointer-events: none; font-size: 28px; }
@@ -421,4 +468,49 @@
 }
 .group-shape.shape-rect .group-shape-name { top: 8px; left: 14px; }
 .group-shape-name .card-title-input { min-width: 140px; pointer-events: auto; }
+/* Group titles (outline, calendar, drawn group): a half-transparent backing, the group's color fading into the
+   background color, so the title stays readable on a light or dark board and over cards or images. */
+.group-name, .group-shape-name {
+  --title-tint: var(--accent);
+  box-sizing: border-box; padding: 1px 8px; border-radius: 6px;
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--title-tint) 30%, color-mix(in srgb, var(--bg) 80%, transparent)),
+    color-mix(in srgb, var(--title-tint) 8%, color-mix(in srgb, var(--bg) 50%, transparent)));
+  -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+}
+.outline-frame .group-name { --title-tint: #3fbf6a; }
+.calendar-frame .group-name { --title-tint: #4a90ff; }
+.group-shape-name { --title-tint: currentColor; }
 .card.view-group .react-flow__resize-control, .group-shape .resize-handle, .group-shape .resize-line { pointer-events: auto; }
+
+/* Multimedia items (mediaCard.tsx, SPEC 7.14): the cover fills the top, the name and the artist are under it. */
+.card.media-card { padding: 6px; gap: 6px; background: var(--bg-panel); border-color: var(--border); color: var(--text); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3); }
+.media-cover { position: relative; flex: 1 1 auto; min-height: 40px; border-radius: 6px; overflow: hidden; }
+.media-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* No cover: a picture of a sunny morning (the look of the buzzies demo). */
+.media-placeholder { position: absolute; inset: 0; background: linear-gradient(135deg, #5c6bc0 0%, #7fb7a8 45%, #e0b562 100%); }
+.media-placeholder::after { content: ""; position: absolute; left: 18%; top: 22%; width: 22%; aspect-ratio: 1; border-radius: 50%; background: #f3e2b0; opacity: 0.85; }
+.media-kind { position: absolute; left: 6px; bottom: 6px; display: inline-flex; padding: 3px; border-radius: 5px; background: rgba(0, 0, 0, 0.45); color: #fff; }
+.media-duration { position: absolute; right: 6px; bottom: 6px; padding: 1px 5px; border-radius: 5px; background: rgba(0, 0, 0, 0.55); color: #fff; font-size: 10.5px; font-variant-numeric: tabular-nums; }
+.media-text { display: flex; flex-direction: column; gap: 1px; padding: 0 4px 2px; min-width: 0; }
+.media-text .card-name { font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.media-text .media-artist { font-weight: 400; font-size: 11.5px; color: var(--text-muted); }
+.media-buttons { position: absolute; top: 8px; right: 8px; display: flex; gap: 2px; }
+.media-buttons .card-icon { background: rgba(0, 0, 0, 0.45); color: #fff; border-radius: 5px; }
+.media-fields label { color: var(--text-muted); grid-template-columns: 44px 1fr; }
+.media-fields select { width: 100%; }
+.media-field-buttons { display: flex; flex-wrap: wrap; gap: 4px; }
+.media-field-buttons button { font-size: 11px; padding: 2px 8px; }
+
+/* A radial core (radialNode.tsx, SPEC 7.17): a light red circle with white text, and thin lines to its cards. */
+.radial-core { box-sizing: border-box; display: grid; place-items: center; padding: 6px; border-radius: 50%; background: #ff8f8f; border: 1.5px solid #f26d6d; color: #fff; font-size: 12px; font-weight: 700; line-height: 1.2; text-align: center; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25); cursor: grab; }
+.radial-core.selected { box-shadow: 0 0 0 2px var(--accent), 0 2px 8px rgba(0, 0, 0, 0.25); }
+.radial-core.drop-target { box-shadow: 0 0 0 3px var(--accent); }
+.radial-core-text { overflow: hidden; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+.radial-core .radial-core-text.untitled { color: rgba(255, 255, 255, 0.8); font-weight: 600; }
+.radial-core .card-title-input { width: 100%; text-align: center; font-size: 12px; }
+.react-flow__edge.edge-radial .react-flow__edge-path { stroke: var(--border-strong); stroke-width: 1.2; opacity: 0.8; }
+/* A jump to a card (Show file location, search, links): a yellow box flashes twice around it (BoardView focus). */
+.react-flow__node.locate-flash::after { content: ""; position: absolute; inset: -8px; border: 3px solid #ffd60a; border-radius: 12px; box-shadow: 0 0 14px rgba(255, 214, 10, 0.55); pointer-events: none; opacity: 0; animation: locate-flash 0.6s ease-in-out 2; z-index: 5; }
+@keyframes locate-flash { 0%, 100% { opacity: 0; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .react-flow__node.locate-flash::after { animation: none; opacity: 1; } }

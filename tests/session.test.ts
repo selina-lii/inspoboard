@@ -66,6 +66,13 @@ describe("session", () => {
     expect(backend.calls.filter((call) => call.startsWith("write"))).toEqual([]);
   });
 
+  it("takes no change of a different vault (a different window)", async () => {
+    const { backend, session } = await openTestVault();
+    const before = session.store.get("texts", IDEAS)?.body;
+    backend.outsideWrite(`items/${IDEAS}.md`, "a file of a different vault", "/a/different/vault");
+    expect(session.store.get("texts", IDEAS)?.body).toBe(before);
+  });
+
   it("loads an outside table change", async () => {
     const { backend, session } = await openTestVault();
     const items = backend.files.get(TABLE_FILES.items)!.replace('"name":"Ideas"', '"name":"Outside name"');

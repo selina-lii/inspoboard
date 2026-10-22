@@ -5,6 +5,8 @@
 // - Only vault images show. The app makes no network request: a web image shows its address only.
 // - Size: the alt text can end with "|<width>" (as in Obsidian): ![sky|320](images/sky.png) shows 320 px wide.
 //   Drag the handle at the right edge or the bottom-right corner of an image to change it. The image keeps its shape.
+// - Place: the alt text can end with "|left" or "|right" (after the width): ![sky|320|right](images/sky.png). The
+//   image floats at that side and the next lines of text go beside it. Right-click the image to set it.
 
 import { syntaxTree } from "@codemirror/language";
 import { Facet, type EditorState, type Range } from "@codemirror/state";
@@ -24,18 +26,30 @@ export function vaultImagePath(target: string): string | null {
   return /^images\/[A-Za-z0-9_.-]+\.(png|jpe?g|gif|webp)$/i.test(path) && !path.slice(7).startsWith(".") ? path : null;
 }
 
-/** The Markdown for an image: ![alt](path), or ![alt|width](path) with a width. Brackets in the alt text are removed. */
-export function imageMarkdown(path: string, alt = "", width: number | null = null): string {
-  const text = alt.replace(/[[\]\n|]/g, " ").trim();
-  return `![${width === null ? text : `${text}|${Math.round(width)}`}](${path})`;
+/** Where an image is in the text: on its own lines (null), or at the left or right side with the text beside it. */
+export type ImagePlace = "left" | "right" | null;
+
+/** The Markdown for an image: ![alt](path), ![alt|width](path), ![alt|width|right](path). Brackets in the alt text are removed. */
+export function imageMarkdown(path: string, alt = "", width: number | null = null, place: ImagePlace = null): string {
+  const parts = [alt.replace(/[[\]\n|]/g, " ").trim()];
+  if (width !== null) parts.push(String(Math.round(width)));
+  if (place !== null) parts.push(place);
+  return `![${parts.join("|")}](${path})`;
 }
 
-/** The alt text and the width of an image from its Markdown alt part: "sky|320" -> { alt: "sky", width: 320 }. */
-export function imageAlt(raw: string): { alt: string; width: number | null } {
-  const match = /^(.*?)\|\s*(\d{1,5})(?:\s*x\s*\d{1,5})?\s*$/.exec(raw);
-  if (match === null) return { alt: raw, width: null };
+/** The alt text, the width, and the place of an image from its Markdown alt part: "sky|320|right" -> { alt: "sky", width: 320, place: "right" }. */
+export function imageAlt(raw: string): { alt: string; width: number | null; place: ImagePlace } {
+  let rest = raw;
+  let place: ImagePlace = null;
+  const side = /\|\s*(left|right)\s*$/i.exec(rest);
+  if (side !== null) {
+    place = side[1]!.toLowerCase() as "left" | "right";
+    rest = rest.slice(0, side.index);
+  }
+  const match = /^(.*?)\|\s*(\d{1,5})(?:\s*x\s*\d{1,5})?\s*$/.exec(rest);
+  if (match === null) return { alt: place === null ? raw : rest.trim(), width: null, place };
   const width = Number(match[2]);
-  return { alt: match[1]!.trim(), width: width > 0 ? width : null };
+  return { alt: match[1]!.trim(), width: width > 0 ? width : null, place };
 }
 
 /** The smallest width that a drag gives an image. */
@@ -66,12 +80,13 @@ class ImageWidget extends WidgetType {
     const box = document.createElement("span");
     box.className = "cm-md-image";
     const source = view.state.facet(imageSource);
-    const { alt, width } = imageAlt(this.alt);
+    const { alt, width, place } = imageAlt(this.alt);
     if (this.path === null || source === null) {
       box.classList.add("missing");
       box.textContent = this.path === null ? `Image from the web (not loaded: the app is offline): ${this.target}` : alt || this.target;
       return box;
     }
+    if (place !== null) box.classList.add(`place-${place}`);
     const frame = document.createElement("span");
     frame.className = "cm-md-image-frame";
     const image = document.createElement("img");
@@ -126,8 +141,8 @@ class ImageWidget extends WidgetType {
       if (Math.abs(width - startWidth) < 2) return;
       const range = imageRangeAt(view, view.posAtDOM(box));
       if (range === null) return;
-      const { alt } = imageAlt(range.alt);
-      view.dispatch({ changes: { from: range.from, to: range.to, insert: imageMarkdown(range.target, alt, width) } });
+      const { alt, place } = imageAlt(range.alt);
+      view.dispatch({ changes: { from: range.from, to: range.to, insert: imageMarkdown(range.target, alt, width, place) } });
     };
     handle.addEventListener("pointermove", move);
     handle.addEventListener("pointerup", up);
@@ -138,6 +153,18 @@ class ImageWidget extends WidgetType {
     // The editor does not handle a drag on a handle (no text selection).
     return event.target instanceof Element && event.target.classList.contains("cm-md-image-handle");
   }
+}
+
+/** The image of a right-click on its picture, or null. */
+export function imageAtEvent(view: EditorView, event: MouseEvent): { from: number; to: number; alt: string; target: string } | null {
+  const box = event.target instanceof Element ? event.target.closest(".cm-md-image") : null;
+  return box instanceof HTMLElement && view.contentDOM.contains(box) ? imageRangeAt(view, view.posAtDOM(box)) : null;
+}
+
+/** Sets the place of an image (one change, undo works). */
+export function placeImage(view: EditorView, image: { from: number; to: number; alt: string; target: string }, place: ImagePlace): void {
+  const { alt, width } = imageAlt(image.alt);
+  view.dispatch({ changes: { from: image.from, to: image.to, insert: imageMarkdown(image.target, alt, width, place) } });
 }
 
 /** The Markdown image at (or just before) a position: its range, alt part, and target. */
@@ -214,8 +241,10 @@ export const imagePreview = ViewPlugin.fromClass(
 /**
  * Paste and drop of image files: each file goes into the vault (`save`), then its Markdown goes into the text
  * at the cursor (paste) or at the drop point. Other content pastes as usual.
+ * WebKit often gives the page no pasted image (a screenshot, an image from an app, a file copied in Finder): then the
+ * backend reads the system clipboard (`pasteNative`, clipboard.rs).
  */
-export function imageInput(save: (name: string, bytes: Uint8Array) => Promise<string>, onError: (message: string) => void) {
+export function imageInput(save: (name: string, bytes: Uint8Array) => Promise<string>, pasteNative: () => Promise<string[]>, onError: (message: string) => void) {
   const insert = (view: EditorView, files: File[], at: number) => {
     void (async () => {
       const parts: string[] = [];
@@ -228,13 +257,7 @@ export function imageInput(save: (name: string, bytes: Uint8Array) => Promise<st
           onError(String(problem).replace(/^Error: /, ""));
         }
       }
-      if (parts.length === 0) return;
-      // Each image on its own line.
-      const line = view.state.doc.lineAt(Math.min(at, view.state.doc.length));
-      const before = at > line.from ? "\n" : "";
-      const after = at < line.to ? "\n" : "";
-      const text = `${before}${parts.join("\n")}${after}`;
-      view.dispatch({ changes: { from: at, insert: text }, selection: { anchor: at + text.length } });
+      insertImageMarkdown(view, parts, at);
     })();
   };
   const run = (view: EditorView, data: DataTransfer | null, at: number): boolean => {
@@ -254,8 +277,25 @@ export function imageInput(save: (name: string, bytes: Uint8Array) => Promise<st
   return EditorView.domEventHandlers({
     paste: (event, view) => {
       if (view.state.readOnly) return false;
-      if (!run(view, event.clipboardData, view.state.selection.main.head)) return false;
+      const at = view.state.selection.main.head;
+      if (run(view, event.clipboardData, at)) {
+        event.preventDefault();
+        return true;
+      }
+      // No image in the paste event: the backend reads the system clipboard. A text paste stays a usual paste, except
+      // when the clipboard can hold a file (Finder gives the file name as the text).
+      const data = event.clipboardData;
+      const text = data?.getData("text/plain") ?? "";
+      const types = [...(data?.types ?? [])];
+      if (text.trim() !== "" && !types.some((type) => type === "Files" || type === "text/uri-list" || type.startsWith("image/"))) return false;
       event.preventDefault();
+      pasteNative().then(
+        (paths) => {
+          if (paths.length > 0) insertImageMarkdown(view, paths.map((path) => imageMarkdown(path)), at);
+          else if (text !== "") view.dispatch(view.state.replaceSelection(text), { userEvent: "input.paste", scrollIntoView: true });
+        },
+        (problem: unknown) => onError(String(problem).replace(/^Error: /, "")),
+      );
       return true;
     },
     drop: (event, view) => {
@@ -266,6 +306,17 @@ export function imageInput(save: (name: string, bytes: Uint8Array) => Promise<st
       return true;
     },
   });
+}
+
+/** Puts the Markdown of images at `at` in the text: each image on its own line. */
+export function insertImageMarkdown(view: EditorView, parts: readonly string[], at: number): void {
+  if (parts.length === 0) return;
+  at = Math.min(at, view.state.doc.length);
+  const line = view.state.doc.lineAt(at);
+  const before = at > line.from ? "\n" : "";
+  const after = at < line.to ? "\n" : "";
+  const text = `${before}${parts.join("\n")}${after}`;
+  view.dispatch({ changes: { from: at, insert: text }, selection: { anchor: at + text.length } });
 }
 
 /**

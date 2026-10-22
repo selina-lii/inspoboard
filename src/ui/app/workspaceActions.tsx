@@ -1,6 +1,7 @@
 // Actions that views can ask the workspace to do: navigation and windows.
 
 import { createContext, useContext } from "react";
+import type { PassageEnd } from "../../core/linkEnds";
 import type { Id } from "../../core/types";
 import type { FieldsRequest } from "../dialogs/FieldsDialog";
 
@@ -17,7 +18,7 @@ export type WorkspaceActions = {
    * Ask the user for a link target with a search of all boards (names and texts). Resolves with the item, and the found
    * text in it (`quote`) for a hit in a text. Null if cancelled.
    */
-  searchLinkTarget(): Promise<{ itemId: Id; quote?: string } | null>;
+  searchLinkTarget(title?: string): Promise<{ itemId: Id; quote?: string } | null>;
   /** While a link from selected text waits for its target: opens the search of all boards for the target. */
   searchTextLinkTarget(): void;
   /** Ask the user for some text values (a small dialog). Resolves with the values, or null if cancelled. */
@@ -45,6 +46,10 @@ export type WorkspaceActions = {
   followLink(linkId: Id): void;
   /** Shows an item and marks a text range in it (yellow). */
   openAt(itemId: Id, target?: JumpRange): void;
+  /** Shows where an item is: its home (parent) board, with its card centered and selected. */
+  showLocation(itemId: Id): void;
+  /** Two items (or passages) side by side with their differences (the compare lab plugin, SPEC 7.15). */
+  compare(left: PassageEnd, right: PassageEnd): void;
 };
 
 /** A text location in an item: an exact quote, or a range of string indexes. */

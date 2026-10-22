@@ -25,3 +25,20 @@ export function shortcutKey(event: KeyEventLike): string {
   if (named !== undefined) return named;
   return event.key.toLowerCase();
 }
+
+/**
+ * macOS: Ctrl+click is a right-click (a `contextmenu` event, and no `click`). A `contextmenu` listener calls this: a
+ * Ctrl+click on a link becomes a ⌘-click at the same place (a new `click` event), and the menu does not open. Returns
+ * true if it did.
+ */
+export function ctrlClickAsCommandClick(event: MouseEvent): boolean {
+  if (!event.ctrlKey || event.metaKey || !(event.target instanceof Node)) return false;
+  // Only on a link: elsewhere Ctrl+click stays the right-click of macOS (its menu).
+  const element = event.target.nodeType === Node.ELEMENT_NODE ? (event.target as Element) : event.target.parentElement;
+  if (element?.closest("a[href]") == null) return false;
+  event.preventDefault();
+  event.stopPropagation();
+  const view = event.target.ownerDocument?.defaultView ?? window;
+  event.target.dispatchEvent(new view.MouseEvent("click", { bubbles: true, cancelable: true, clientX: event.clientX, clientY: event.clientY, screenX: event.screenX, screenY: event.screenY, metaKey: true, view }));
+  return true;
+}

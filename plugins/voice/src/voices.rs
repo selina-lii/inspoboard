@@ -83,6 +83,7 @@ pub fn parse(id: &str) -> Result<(Engine, &str), String> {
 }
 
 /// How to say a text.
+#[derive(Clone, Copy)]
 pub struct Style {
     pub rate: f32,
     pub volume: f32,
@@ -131,32 +132,15 @@ impl Engines {
             None => self.kokoro[0].lock().map_err(|_| "Internal lock error.")?,
         };
         if slot.is_none() {
-            let file = |name: &str| Some(folder.join(name).to_string_lossy().to_string());
-            let config = OfflineTtsConfig {
-                model: OfflineTtsModelConfig {
-                    kokoro: OfflineTtsKokoroModelConfig {
-                        // The pack has one model file: int8 or fp32.
-                        model: file(if folder.join("model.onnx").is_file() { "model.onnx" } else { "model.int8.onnx" }),
-                        voices: file("voices.bin"),
-                        tokens: file("tokens.txt"),
-                        data_dir: file("espeak-ng-data"),
-                        ..Default::default()
-                    },
-                    // The CPU threads are shared by the models.
-                    num_threads: (4 / KOKORO_SLOTS as i32).max(1),
-                    ..Default::default()
-                },
-                max_num_sentences: 1,
-                ..Default::default()
-            };
+            let config = kokoro_config(folder, kokoro_threads(), None);
             *slot = Some(OfflineTts::create(&config).ok_or("The offline voice could not start. Download the voice pack again.")?);
         }
         let tts = slot.as_ref().expect("voice is loaded");
         // Speak slower by the pitch factor, then resample: the pitch changes, the speed stays.
         let generation = GenerationConfig { sid: speaker, speed: style.rate / factor, ..Default::default() };
         let generated = tts.generate_with_config(text, &generation, None::<fn(&[f32], f32) -> bool>).ok_or("The offline voice failed.")?;
-        let samples = audio::resample(generated.samples(), factor);
-        Ok(Audio::Wav { samples, sample_rate: generated.sample_rate() as u32 })
+        // The caller trims the silence at the ends (see audio::trim_silence).
+        Ok(Audio::Wav { samples: audio::resample(generated.samples(), factor), sample_rate: generated.sample_rate() as u32 })
     }
 
     fn edge(&self, name: &str, text: &str, style: &Style) -> Result<Audio, String> {
@@ -186,6 +170,36 @@ impl Engines {
     }
 }
 
+/// CPU threads for each offline model: the cores less two (for the app and the system), shared by the models.
+/// Measured on an Apple M4 (10 cores): 2 models × 4 threads make speech 1.6 times as fast as 2 × 2, and nearly as
+/// fast as 4 × 2 with half the memory. More threads for one model help less (see the test "bench").
+fn kokoro_threads() -> i32 {
+    let cores = std::thread::available_parallelism().map_or(4, |count| count.get());
+    (cores.saturating_sub(2) / KOKORO_SLOTS).max(1) as i32
+}
+
+/// The settings of one offline model: the pack files, the CPU threads, and the provider ("cpu", "coreml"; None: CPU).
+fn kokoro_config(folder: &Path, threads: i32, provider: Option<&str>) -> OfflineTtsConfig {
+    let file = |name: &str| Some(folder.join(name).to_string_lossy().to_string());
+    OfflineTtsConfig {
+        model: OfflineTtsModelConfig {
+            kokoro: OfflineTtsKokoroModelConfig {
+                // The pack has one model file: int8 or fp32.
+                model: file(if folder.join("model.onnx").is_file() { "model.onnx" } else { "model.int8.onnx" }),
+                voices: file("voices.bin"),
+                tokens: file("tokens.txt"),
+                data_dir: file("espeak-ng-data"),
+                ..Default::default()
+            },
+            num_threads: threads,
+            provider: provider.map(str::to_string),
+            ..Default::default()
+        },
+        max_num_sentences: 1,
+        ..Default::default()
+    }
+}
+
 fn escape_xml(text: &str) -> String {
     text.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\'', "&apos;")
 }
@@ -212,6 +226,68 @@ mod tests {
         assert_eq!(parse_pitch("high"), None);
         assert!((pitch_factor("kokoro:5", 12.0) - 1.1).abs() < 1e-6);
         assert!((pitch_factor("kokoro:1", 0.0) - 1.0).abs() < 1e-6);
+    }
+
+    /// Speed of the offline voice for models × threads (and CoreML). Not a normal test: it needs the voice pack.
+    /// BENCH_PACK=<pack folder> BENCH_TEXT=<text file> cargo test --release bench -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn bench() {
+        let folder = std::path::PathBuf::from(std::env::var("BENCH_PACK").expect("BENCH_PACK"));
+        let text = std::fs::read_to_string(std::env::var("BENCH_TEXT").expect("BENCH_TEXT")).unwrap();
+        let count: usize = std::env::var("BENCH_COUNT").ok().and_then(|value| value.parse().ok()).unwrap_or(40);
+        let sentences: Vec<String> = crate::sentences::split(&text).into_iter().map(|sentence| sentence.speech).filter(|speech| speech.len() > 20).skip(20).take(count).collect();
+        let configs: Vec<(usize, i32, Option<&str>)> = std::env::var("BENCH_CONFIGS")
+            .unwrap_or_else(|_| "1x4,2x2,1x8,2x4,4x2,3x3,4x1,1x4c".to_string())
+            .split(',')
+            .map(|entry| {
+                let coreml = entry.ends_with('c');
+                let (models, threads) = entry.trim_end_matches('c').split_once('x').unwrap();
+                (models.parse().unwrap(), threads.parse().unwrap(), coreml.then_some("coreml"))
+            })
+            .collect();
+        for (models, threads, provider) in configs {
+            let engines: Vec<OfflineTts> = (0..models).map(|_| OfflineTts::create(&kokoro_config(&folder, threads, provider)).expect("model")).collect();
+            // Warm up each model once.
+            for tts in &engines {
+                tts.generate_with_config("Hello there.", &GenerationConfig { sid: 1, ..Default::default() }, None::<fn(&[f32], f32) -> bool>);
+            }
+            let next = std::sync::atomic::AtomicUsize::new(0);
+            let audio = Mutex::new(0.0f64);
+            let start = std::time::Instant::now();
+            std::thread::scope(|scope| {
+                for tts in &engines {
+                    scope.spawn(|| {
+                        loop {
+                            let index = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                            let Some(sentence) = sentences.get(index) else { break };
+                            let generated = tts.generate_with_config(sentence, &GenerationConfig { sid: 1, ..Default::default() }, None::<fn(&[f32], f32) -> bool>).unwrap();
+                            *audio.lock().unwrap() += generated.samples().len() as f64 / generated.sample_rate() as f64;
+                        }
+                    });
+                }
+            });
+            let seconds = start.elapsed().as_secs_f64();
+            let audio = *audio.lock().unwrap();
+            println!("{models} models x {threads} threads {}: {:.2} s per sentence, {:.1} s of speech per second", provider.unwrap_or("cpu"), seconds / sentences.len() as f64, audio / seconds);
+        }
+    }
+
+    /// The silence at the start and the end of clips (ms). Needs the voice pack, as "bench".
+    #[test]
+    #[ignore]
+    fn silence_at_ends() {
+        let folder = std::path::PathBuf::from(std::env::var("BENCH_PACK").expect("BENCH_PACK"));
+        let tts = OfflineTts::create(&kokoro_config(&folder, 4, None)).expect("model");
+        for text in ["The cells fire in a burst.", "However, the effect was small, and it did not last.", "Results are shown in Table 2."] {
+            let generated = tts.generate_with_config(text, &GenerationConfig { sid: 1, ..Default::default() }, None::<fn(&[f32], f32) -> bool>).unwrap();
+            let samples = generated.samples();
+            let rate = generated.sample_rate() as f32;
+            let loud = |sample: &&f32| sample.abs() > 0.01;
+            let start = samples.iter().position(|sample| loud(&sample)).unwrap_or(0);
+            let end = samples.len() - samples.iter().rposition(|sample| loud(&sample)).unwrap_or(samples.len());
+            println!("{text}: {:.0} ms at the start, {:.0} ms at the end, {:.0} ms in all", start as f32 / rate * 1000.0, end as f32 / rate * 1000.0, samples.len() as f32 / rate * 1000.0);
+        }
     }
 
     #[test]

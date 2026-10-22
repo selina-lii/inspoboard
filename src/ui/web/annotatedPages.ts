@@ -8,8 +8,7 @@
 import { useEffect, useSyncExternalStore } from "react";
 import type { Id } from "../../core/types";
 import type { Session } from "../../io/session";
-import { isLocalPath, notesPath, readNotes, type WebNotes } from "./savedPages";
-import { legacyKey, notesSourceOf } from "./webHomes";
+import { notesPath, readNotes, type WebNotes } from "./savedPages";
 
 type Cache = { annotated: Map<Id, boolean>; asked: Set<Id> };
 const caches = new WeakMap<Session, Cache>();
@@ -32,7 +31,7 @@ function changed(): void {
 
 /** True if the notes have content. */
 export function hasNotes(notes: WebNotes): boolean {
-  return notes.highlights.length > 0 || notes.scribbles.length > 0 || notes.items.length > 0;
+  return notes.highlights.length > 0 || notes.scribbles.length > 0;
 }
 
 /** The reader tells the app the notes state of a link object (at load, and after each change). */
@@ -51,8 +50,8 @@ export async function isAnnotated(session: Session, itemId: Id, url: string): Pr
   if (known !== undefined) return known;
   let value = false;
   try {
-    const shared = isLocalPath(url) ? null : await legacyKey(url);
-    value = hasNotes(readNotes(await session.readWebFile(notesPath(await notesSourceOf(session, itemId, url, shared)))));
+    void url;
+    value = hasNotes(readNotes(await session.readWebFile(notesPath(itemId))));
   } catch {
     value = false;
   }

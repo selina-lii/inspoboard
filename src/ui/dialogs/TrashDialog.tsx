@@ -1,7 +1,11 @@
 // The trash: items that are on no board, the most recent first. See docs/SPEC.md section 5.4.
 // Type to filter. A click (or Enter) puts the item back ("Restore") and shows it. The trash button deletes it for good.
 
-import { RotateCcw, Trash2 } from "lucide-react";
+import { LifeBuoy, RotateCcw, Trash2 } from "lucide-react";
+import { lostTops } from "../../core/lost";
+import { useWorkspaceActions } from "../app/workspaceActions";
+import { lostAndFoundMap } from "../plugins/tray/tray";
+import { rightOfCards } from "../../core/actions";
 import { deleteForever, restoreFromTrash, trashEntries } from "../../core/trash";
 import type { Id } from "../../core/types";
 import { snippetOf, titleOf } from "../board/boardModel";
@@ -13,16 +17,14 @@ type Props = { boardId: Id; onOpen(boardId: Id, itemId: Id): void; onClose(): vo
 
 export function TrashDialog({ boardId, onOpen, onClose }: Props) {
   const session = useSession();
-  const { readOnly } = useSessionState();
+  const { readOnly, settings } = useSessionState();
+  const actions = useWorkspaceActions();
   const runCommand = useRunCommand();
   useStoreRevision();
 
   const restore = (itemId: Id) => {
     // No last board (or it is gone too): to the right of the cards on the current board.
-    const children = session.graph.childrenOf(boardId);
-    const x = children.length === 0 ? 0 : Math.max(...children.map((place) => place.x + place.w)) + 40;
-    const y = children.length === 0 ? 0 : Math.min(...children.map((place) => place.y));
-    const { command, boardId: target } = restoreFromTrash(session.context, session.rootId, itemId, { boardId, x, y });
+    const { command, boardId: target } = restoreFromTrash(session.context, session.rootId, itemId, { boardId, ...rightOfCards(session, boardId) });
     if (runCommand(command)) onOpen(target, itemId);
   };
 
@@ -87,10 +89,30 @@ export function TrashDialog({ boardId, onOpen, onClose }: Props) {
     });
   };
 
+  // Plugin "Sorting tray": "Lost and found" salvages all items that no board shows (also those on a board that is on no
+  // board: they are not in the trash). It opens the "Lost and found" map of the root board (made at the first use).
+  const lostCount = settings.tray ? lostTops(session.store, session.graph, session.rootId).length : 0;
+  const openLostAndFound = () => {
+    const { mapId, command } = lostAndFoundMap(session.context, session.rootId, rightOfCards(session, session.rootId));
+    if (command !== null && !runCommand(command)) return;
+    onClose();
+    actions.openBoard(mapId);
+  };
+
   return (
     <ListDialog
       title="Trash"
       placeholder="Filter"
+      header={
+        settings.tray && !readOnly ? (
+          <div className="trash-lost">
+            <span className="setting-help">{lostCount === 0 ? "No items are lost: each item shows on a board or in the trash." : `${lostCount} lost items (no board shows them), with the trash.`}</span>
+            <button onClick={openLostAndFound} data-tip="A sorting map whose tray holds the lost items: pull them out onto a board">
+              <LifeBuoy size={13} /> Lost and found
+            </button>
+          </div>
+        ) : undefined
+      }
       entriesFor={entriesFor}
       emptyText="The trash is empty. Items that you delete from all boards show here."
       onChoose={(entry) => !readOnly && restore(entry.data as Id)}

@@ -124,3 +124,8 @@ export class History {
     for (const listener of this.listeners) listener();
   }
 }
+
+/** A command that changes nothing (for example an action that has nothing to do). */
+export function emptyCommand(label: string): Command {
+  return { label, ops: [] };
+}

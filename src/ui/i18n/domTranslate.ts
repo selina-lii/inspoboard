@@ -24,6 +24,9 @@ const SKIP = [
   ".card-preview",
   // A name of the user. An empty name shows a UI word ("Untitled", "Calendar"): class "untitled".
   ".card-name:not(.untitled)",
+  ".card-subtitle",
+  ".compare-name",
+  ".compare-cell",
   ".quote-source",
   ".group-name:not(.untitled)",
   ".center-edge-label",
@@ -133,6 +136,11 @@ export class DomTranslator {
     map.set(name, { source, shown });
     if (shown !== current) element.setAttribute(name, shown);
   }
+}
+
+/** True if the element holds user text (not UI text): the translator never changes it, and buzzies mode buzzes it. */
+export function isUserText(element: Element): boolean {
+  return skipped(element);
 }
 
 function skipped(element: Element): boolean {

@@ -31,6 +31,8 @@
 .plugin-folder { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); }
 .plugin-entry { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius); }
 .plugin-entry-head { display: flex; align-items: center; gap: 6px; }
+/* A lab plugin: experimental. */
+.plugin-lab { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; padding: 1px 5px; border-radius: 6px; background: rgba(160, 110, 255, 0.18); color: #a06eff; }
 .plugin-action { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13px; }
 .plugin-action button { flex: none; }
 
@@ -73,6 +75,7 @@
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
 }
 .speech-bar {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -82,9 +85,15 @@
   border-radius: 999px;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
 }
-.speech-count { font-size: 12px; font-variant-numeric: tabular-nums; min-width: 48px; text-align: center; }
+/* Fixed widths (with room to spare): the bar never changes its width while the reading moves or the speed is dragged. */
+.speech-count { font-size: 12px; font-variant-numeric: tabular-nums; width: 12ch; text-align: center; white-space: nowrap; overflow: hidden; }
 .speech-slider { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 .speech-slider input { width: 90px; accent-color: var(--accent); }
+/* The reminder over the lock button (a click on the text while the lock is on). It goes after about 2 s. */
+.speech-lock-reminder { position: absolute; bottom: calc(100% + 8px); left: 12px; max-width: 280px; padding: 6px 10px; border-radius: var(--radius); background: var(--bg-panel); border: 1px solid var(--accent); font-size: 12px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35); pointer-events: none; animation: speech-reminder 2.2s ease forwards; }
+@keyframes speech-reminder { 0% { opacity: 0; transform: translateY(4px); } 10%, 80% { opacity: 1; transform: none; } 100% { opacity: 0; } }
+.speech-rate { width: 5.5ch; text-align: right; cursor: text; }
+.speech-rate-input { width: 5.5ch; font: inherit; font-size: 12px; padding: 0 2px; text-align: right; }
 /* The sentence that is read now: a strong yellow mark. The other sentences are dimmed. */
 .spoken-text mark {
   background: #ffd60a;
@@ -165,7 +174,7 @@
 .option-text { display: inline-flex; align-items: center; gap: 4px; min-width: 0; } .option-text input { flex: 1; min-width: 0; } .option-unit { font-size: 12px; color: var(--text-muted); }
 /* The read-aloud bar is at the bottom of the board: its tooltips show above it (below, they would be cut off). */
 .speech-layer [data-tip]:hover::after { top: auto; bottom: calc(100% + 6px); }
-.speech-left { font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.speech-left { font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; width: 15ch; text-align: center; overflow: hidden; text-overflow: ellipsis; }
 .plugin-check.plugin-indent { padding-left: 20px; }
 
 /* The 簡/繁 plugin icon: two characters in the size of an icon. */
@@ -173,4 +182,13 @@
 .speech-subtitle-second { display: block; margin-top: 6px; font-size: 0.72em; font-weight: 400; opacity: 0.85; }
 .speech-prepare { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-variant-numeric: tabular-nums; }
 /* The "ready" cursor of read aloud in a text: where the ready audio ends. */
-.ready-cursor { display: inline-block; width: 2px; height: 1.1em; margin: 0 1px; vertical-align: text-bottom; background: var(--accent); opacity: 0.85; border-radius: 1px; }
+.ready-cursor { position: relative; display: inline-block; width: 2px; height: 1.1em; margin: 0 1px; vertical-align: text-bottom; background: #ff3b30; border-radius: 1px; }
+/* A red map pin ("you are here") on top of the bar. */
+.ready-cursor::before { content: ""; position: absolute; left: 50%; bottom: 100%; width: 12px; height: 12px; margin-left: -6px; background: #ff3b30; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4); }
+.ready-cursor::after { content: ""; position: absolute; left: 50%; bottom: calc(100% + 5px); width: 4px; height: 4px; margin-left: -2px; background: #fff; border-radius: 50%; }
+
+/* "Formulas → words" (FormulaButton.tsx): a button with a label; while a PDF is scanned, the pages done and a stop. */
+.formula-button { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; border: 1px solid var(--border); border-radius: var(--radius); background: transparent; color: var(--text-muted); font-size: 12px; white-space: nowrap; cursor: pointer; }
+.formula-button:hover { background: var(--bg-hover); color: var(--text); }
+.formula-button.active { border-color: var(--accent); color: var(--text); }
+span.formula-button { cursor: default; }

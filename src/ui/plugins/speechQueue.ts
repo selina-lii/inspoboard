@@ -1,8 +1,11 @@
 // Read-aloud queue: plays one clip per sentence, in order. It gets the next clips before they are necessary:
 // the current sentence first, then the next ones, at most PARALLEL at a time (the voice can make them in parallel).
 // How far ahead (setting "speechAhead"):
-// - "window": until about BUFFER_CHARACTERS of speech (about one minute) are ready ahead. Not more: a step or a stop
-//   does not waste work, and memory stays small.
+// - "window": up to AHEAD_MAX sentences ahead (default). It goes on while the reading is paused.
+//   When an other reading starts to make audio (an other queue starts), this queue stops making new clips and
+//   releases its clips one at a time (AGE_STEP_MS each, the clips farthest from its current sentence first): the
+//   memory goes back slowly, and a quick return still finds the near clips. A start or resume of this queue stops that.
+//   Played clips stay for a step back: at most KEEP_BEHIND of them.
 // - "end": all clips to the end of the text, while it plays.
 // - "all": all clips first; then it plays (progress in onPrepare). The clips stay: a step back needs no new clip.
 // Speed and volume change at once: they apply to the playing audio, not to the speech data.
@@ -13,6 +16,8 @@ import type { Sentence } from "../../io/plugins";
 export type AudioOutput = {
   /** Plays the URL from its start. Calls "started" when the sound starts. Resolves when the clip ends. Rejects on an error. */
   play(url: string, started?: () => void): Promise<void>;
+  /** Loads the next clip while the current one plays, so that it starts at once (optional). */
+  preload?(url: string): void;
   pause(): void;
   resume(): void;
   stop(): void;
@@ -35,10 +40,15 @@ export type QueueEvents = {
 
 export type SpeechAhead = "window" | "end" | "all";
 
-/** Speech that the queue gets ready ahead of the current sentence: about one minute at normal speed. */
-export const BUFFER_CHARACTERS = 900;
-/** At least and at most this many clips ahead (mode "window"). */
-const AHEAD = { min: 2, max: 20 };
+/** At most this many clips ahead of the current sentence (mode "window"). */
+export const AHEAD_MAX = 100;
+/** Played clips that stay (for a step back). */
+export const KEEP_BEHIND = 10;
+/** A queue that gave the voice to an other queue releases one clip each this many ms. */
+export const AGE_STEP_MS = 3000;
+
+/** The queues that have clips (not stopped). The one that starts last has the voice. */
+const queues = new Set<SpeechQueue>();
 /** Clips that the queue requests at the same time. More would only wait in the voice. */
 export const PARALLEL = 2;
 
@@ -57,6 +67,9 @@ export class SpeechQueue {
   private inFlight = 0;
   private ready = new Set<number>();
   private waiters: (() => void)[] = [];
+  /** An other queue started: this one makes no clips ahead, and releases its clips slowly. */
+  private yielded = false;
+  private ageTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(
     private readonly sentences: readonly Sentence[],
@@ -67,7 +80,39 @@ export class SpeechQueue {
     private readonly ahead: SpeechAhead = "window",
   ) {}
 
+  /** This queue makes audio now: the other queues stop making clips ahead. */
+  private takeVoice(): void {
+    for (const other of queues) if (other !== this) other.yieldVoice();
+    queues.add(this);
+    this.yielded = false;
+    if (this.ageTimer !== null) clearInterval(this.ageTimer);
+    this.ageTimer = null;
+  }
+
+  private yieldVoice(): void {
+    if (this.yielded) return;
+    this.yielded = true;
+    this.ageTimer = setInterval(() => this.ageOne(), AGE_STEP_MS);
+  }
+
+  /** Releases the ready clip farthest from the current sentence (not the current one). */
+  private ageOne(): void {
+    let farthest: number | null = null;
+    for (const key of this.ready) if (key !== this.index && (farthest === null || Math.abs(key - this.index) > Math.abs(farthest - this.index))) farthest = key;
+    if (farthest === null) {
+      if (this.ageTimer !== null) clearInterval(this.ageTimer);
+      this.ageTimer = null;
+      return;
+    }
+    const clip = this.clips.get(farthest);
+    this.clips.delete(farthest);
+    this.ready.delete(farthest);
+    if (clip !== undefined) void clip.then(this.releaseClip, () => undefined);
+    this.reportReady();
+  }
+
   start(from = 0): void {
+    this.takeVoice();
     this.run += 1;
     this.paused = false;
     this.wakeResumers();
@@ -85,6 +130,8 @@ export class SpeechQueue {
 
   resume(): void {
     if (!this.paused) return;
+    this.takeVoice();
+    this.fill();
     this.paused = false;
     if (this.clipPlaying) this.audio.resume();
     this.wakeResumers();
@@ -106,6 +153,22 @@ export class SpeechQueue {
     this.start(this.index);
   }
 
+  /**
+   * Drops the clips of these sentences after the current one (for example clips with formulas, made at an old speed):
+   * they are made again. The current clip plays on.
+   */
+  dropAhead(indexes: Iterable<number>): void {
+    for (const index of indexes) {
+      if (index <= this.index) continue;
+      const clip = this.clips.get(index);
+      if (clip === undefined) continue;
+      this.clips.delete(index);
+      if (this.ready.delete(index)) void clip.then(this.releaseClip, () => undefined);
+    }
+    this.reportReady();
+    this.fill();
+  }
+
   /** Goes to the sentence before or after the current one. */
   step(delta: number): void {
     this.start(this.index + delta);
@@ -116,6 +179,9 @@ export class SpeechQueue {
     this.audio.stop();
     this.drop();
     this.wakeResumers();
+    queues.delete(this);
+    if (this.ageTimer !== null) clearInterval(this.ageTimer);
+    this.ageTimer = null;
   }
 
   private drop(): void {
@@ -145,9 +211,16 @@ export class SpeechQueue {
       this.inFlight += 1;
       clip = this.fetchClip(this.sentences[index]!);
       this.clips.set(index, clip);
+      const made = clip;
       const settle = () => {
         if (epoch !== this.epoch) return;
         this.inFlight -= 1;
+        // A clip that was dropped while it was made (dropAhead): it does not count.
+        if (this.clips.get(index) !== made) {
+          void made.then(this.releaseClip, () => undefined);
+          this.fill();
+          return;
+        }
         this.ready.add(index);
         this.reportReady();
         this.wake();
@@ -167,14 +240,10 @@ export class SpeechQueue {
 
   /** The end (exclusive) of the clips to get ready ahead of the current sentence. */
   private aheadEnd(): number {
+    // A queue that gave the voice away makes only the clip that it must play now.
+    if (this.yielded) return Math.min(this.sentences.length, this.index + 1);
     if (this.ahead !== "window") return this.sentences.length;
-    let buffered = 0;
-    let end = this.index + 1;
-    for (let ahead = 1; this.index + ahead < this.sentences.length && ahead <= AHEAD.max && (ahead <= AHEAD.min || buffered < BUFFER_CHARACTERS); ahead += 1) {
-      buffered += this.sentences[this.index + ahead]!.speech.length;
-      end = this.index + ahead + 1;
-    }
-    return end;
+    return Math.min(this.sentences.length, this.index + 1 + AHEAD_MAX);
   }
 
   /** Requests the next clips that have no request yet, while fewer than PARALLEL run. */
@@ -219,6 +288,9 @@ export class SpeechQueue {
         const started = () => {
           if (run === this.run) this.events.onLoading?.(false);
         };
+        // The next clip, if it is made already (fill asked for it): it loads while this one plays.
+        const next = this.clips.get(index + 1);
+        if (next !== undefined && this.audio.preload !== undefined) void next.then((nextUrl) => run === this.run && this.audio.preload?.(nextUrl), () => undefined);
         try {
           await this.audio.play(url, started);
           started();
@@ -235,10 +307,10 @@ export class SpeechQueue {
       }
       if (run !== this.run) return;
       this.index = index + 1;
-      // Keep one played clip (for a step back). Release older ones. Mode "all" keeps all clips.
+      // Keep some played clips (for a step back). Release older ones. Mode "all" keeps all clips.
       if (this.ahead !== "all") {
         for (const [key, clip] of this.clips) {
-          if (key < index) {
+          if (key <= index - KEEP_BEHIND) {
             this.clips.delete(key);
             this.ready.delete(key);
             void clip.then(this.releaseClip, () => undefined);
