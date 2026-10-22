@@ -12,6 +12,7 @@ import {
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
+  useViewport,
   type Edge,
   type OnSelectionChangeParams,
   type Viewport,
@@ -38,6 +39,7 @@ import {
   setPlacementExpanded,
   setPlacementRects,
   writeText,
+  backgroundBox,
   DEFAULT_SIZE,
 } from "../../core/actions";
 import {
@@ -115,6 +117,16 @@ const MAX_ZOOM = 4;
 
 
 
+/** A background image that lies on the board (`backgroundOnBoard`): it moves and zooms with the cards, behind them. */
+function BoardSheet({ url, box }: { url: string; box: { x: number; y: number; w: number; h: number } }) {
+  const { x, y, zoom } = useViewport();
+  return (
+    <div className="board-sheet" aria-hidden>
+      <img src={url} alt="" draggable={false} style={{ left: x + box.x * zoom, top: y + box.y * zoom, width: box.w * zoom, height: box.h * zoom }} />
+    </div>
+  );
+}
+
 export function BoardView(props: Props) {
   return (
     <ReactFlowProvider key={props.boardId}>
@@ -149,13 +161,13 @@ function Board({ boardId, apiRef, tool: toolId, onToolChange, onOpenRecord: open
   // The board background: its own, or the default of the vault.
   const ownBackground = session.store.get("items", boardId)?.background ?? null;
   const background = useBoardBackground(session, ownBackground ?? settings.defaultBackground);
-  // A background image stays still: it fills the view behind the cards. (Records can have "backgroundFixed",
-  // "backgroundWidth", and "backgroundCenter" from an older mode in which the image moved with the cards. The app
-  // keeps these fields but does not use them.)
+  // A background image fills the view behind the cards (it stays still), or (`backgroundOnBoard`, the board's own image)
+  // lies on the board like a cork board: BoardSheet. ("backgroundFixed" is from an older mode: kept, not used.)
+  const onBoard = background?.kind === "image" && ownBackground !== null && session.store.get("items", boardId)?.backgroundOnBoard === true;
   const backgroundStyle =
     background?.kind === "color"
       ? { background: background.color }
-      : background?.kind === "image"
+      : background?.kind === "image" && !onBoard
         ? { backgroundImage: `url("${background.url}")`, backgroundSize: "cover", backgroundPosition: "center" }
         : null;
   const wrapper = useRef<HTMLDivElement>(null);
@@ -821,7 +833,7 @@ function Board({ boardId, apiRef, tool: toolId, onToolChange, onOpenRecord: open
     <BoardCallbacksContext.Provider value={callbacks}>
       <div ref={wrapper} className="board-wrapper">
         <ReactFlow<FlowNode, Edge>
-          className={`board tool-${toolId}`}
+          className={`board tool-${toolId}${onBoard ? " on-sheet" : ""}`}
           style={backgroundStyle ?? undefined}
           onPaneContextMenu={openPaneMenu}
           nodes={nodes}
@@ -864,6 +876,7 @@ function Board({ boardId, apiRef, tool: toolId, onToolChange, onOpenRecord: open
           multiSelectionKeyCode={["Shift", "Meta", "Control"]}
         >
           {background?.kind !== "image" && <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="var(--border)" />}
+          {onBoard && background?.kind === "image" && <BoardSheet url={background.url} box={backgroundBox(session, boardId, background.aspect)} />}
           <Controls showInteractive={false} position="bottom-left" />
         </ReactFlow>
         {tool.overlay !== undefined && <DrawOverlay mode={tool.overlay} toBoard={toBoard} onDone={onDrawDone} />}

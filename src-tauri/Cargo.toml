@@ -2,6 +2,7 @@
 name = "inspoboard"
 version = "0.1.0"
 description = "Inspoboard: a recursive board of plain-text notes"
+license = "MIT"
 edition = "2024"
 rust-version = "1.90"
 

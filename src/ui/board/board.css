@@ -514,3 +514,16 @@
 .react-flow__node.locate-flash::after { content: ""; position: absolute; inset: -8px; border: 3px solid #ffd60a; border-radius: 12px; box-shadow: 0 0 14px rgba(255, 214, 10, 0.55); pointer-events: none; opacity: 0; animation: locate-flash 0.6s ease-in-out 2; z-index: 5; }
 @keyframes locate-flash { 0%, 100% { opacity: 0; } 50% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .react-flow__node.locate-flash::after { animation: none; opacity: 1; } }
+
+/* A background image on the board (backgroundOnBoard): it moves and zooms with the cards, behind them. */
+.board-sheet { position: absolute; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; }
+.board-sheet img { position: absolute; display: block; max-width: none; user-select: none; }
+/* Cards on a board whose image lies on the board (a cork board): each card is pinned, with a pushpin and a deeper
+   shadow, so the board looks like a real one. Group frames are not pinned. The pin colors take turns. */
+.board.on-sheet .react-flow__node-card:not(.group-shape-node) > .card { box-shadow: 0 7px 16px rgba(0, 0, 0, 0.42), 0 1px 3px rgba(0, 0, 0, 0.3); }
+.board.on-sheet .react-flow__node-card:not(.group-shape-node)::after {
+  content: ""; position: absolute; top: -5px; left: 50%; width: 13px; height: 13px; margin-left: -6.5px; border-radius: 50%; pointer-events: none; z-index: 2;
+  background: radial-gradient(circle at 35% 30%, #ffb4a8 0 18%, #e53935 45%, #8e1414 100%); box-shadow: 1px 3px 3px rgba(0, 0, 0, 0.45);
+}
+.board.on-sheet .react-flow__node-card:not(.group-shape-node):nth-child(3n + 1)::after { background: radial-gradient(circle at 35% 30%, #c6dcff 0 18%, #2f6fdb 45%, #123a80 100%); }
+.board.on-sheet .react-flow__node-card:not(.group-shape-node):nth-child(3n + 2)::after { background: radial-gradient(circle at 35% 30%, #fff3b0 0 18%, #f2c230 45%, #8a6608 100%); }

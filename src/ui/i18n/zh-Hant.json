@@ -1427,5 +1427,9 @@
   "Show the text (Esc)": "顯示文字（Esc）",
   "Open Vault in New Window…": "在新視窗打開儲存庫…",
   "New window: {0}": "新視窗：{0}",
-  "This vault is open in a different window.": "這個儲存庫已在另一個視窗中打開。"
+  "This vault is open in a different window.": "這個儲存庫已在另一個視窗中打開。",
+  "Background: fill the view": "背景：填滿視窗",
+  "Background: on the board (it moves with the cards)": "背景：放在畫板上（隨卡片移動）",
+  "Background on the board": "背景放在畫板上",
+  "Background fills the view": "背景填滿視窗"
 }

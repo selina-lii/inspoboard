@@ -11,7 +11,9 @@ A local note app that puts ur notes in a 2D/3D universe,  and any item can link 
 - **A free canvas.** No tree, no fixed flow. Put cards anywhere and put them in collections: an outline, a calendar, or a group.
 - **Local and plain text.** A vault is a folder of Markdown and JSON Lines files. No account, no cloud. Atomic writes, undo for every action; supports snapshots and backups.
 
-![A board: cards, links, a radial, and an outline](docs/images/readme-board.png)
+![A board: cards, links, a radial, an outline, and a page open in its window](docs/images/readme-board.png)
+
+<p align="center"><sub>A board, with a page open: every page is also a plain Markdown editor (headings, lists, to-dos, links).</sub></p>
 
 ## Items
 
@@ -34,9 +36,9 @@ Every item is a card. Small items go on a board, in a page, or in a saved web pa
 
 ## Use it as…
 
-**A moodboard.** Pictures of any size, pinned loosely and overlapping, with notes, quotes, and links on a white sheet: a regular inspiration board. A link can point from a sentence in a page ("topknot") to a picture, and the notes in a collection link to their photos. *(Demo vault: `data/demo-dogs`.)*
+**A moodboard.** Photos of any size, pinned loosely and overlapping on a cork board, with notes, quotes, and links pinned beside them: a regular inspiration board. The cork board lies on the board (it moves and zooms with the cards, and holds them all); right-click the board to choose this for any background image. A link can point from a sentence in a page ("topknot") to a picture, and the notes in a collection link to their photos. *(Demo vault: `data/demo-dogs`.)*
 
-![A moodboard of small white dogs](docs/images/readme-dogs.png)
+![A moodboard of small white dogs](docs/images/readme-dogs.jpg)
 
 ​			`*Shout out to my bestie Freud (that one in the sweater)`
 
@@ -119,3 +121,10 @@ Plugins are optional: `npm run plugins` builds `voice`, `translate`, `web`, `chi
 - [manage/features.md](manage/features.md): the feature list, with tests and hand checks.
 
 The pictures above use made-up vaults: a sample vault ([scripts/screenshots](scripts/screenshots/)) and the demo vaults ([scripts/demos](scripts/demos/)). The dog photos are public domain or CC0 ([credits](scripts/demos/dogs/CREDITS.md)), except the pictures given by the project owner. All README pictures are in [docs/images](docs/images/). To make the demo vaults again: `scripts/demos/make.ts`; the pictures: `scripts/screenshots/shoot.mjs`.
+
+## License
+
+[MIT](LICENSE), except the `chinese` plugin ([GPL-2.0-or-later](plugins/chinese/LICENSE)): it uses `zhconv`, which is GPL. The plugin is a separate program, so the GPL covers only it. The local models that plugins download have their own licenses (for example the Gemma terms).
+
+`@selina-li` w/ the help of `@claude`
+

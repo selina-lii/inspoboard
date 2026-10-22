@@ -1,4 +1,5 @@
 DEMO.md
+images/cork-board.jpg
 images/dog-01.jpg
 images/dog-02.jpg
 images/dog-03.jpg
@@ -9,7 +10,6 @@ images/dog-07.jpg
 images/dog-08.jpg
 images/dog-09.jpg
 images/dog-10.jpg
-images/paper-white.png
 images/star-01.jpg
 images/star-02.jpg
 images/star-03.jpg
@@ -46,7 +46,7 @@ items/dogs00000054.md
 items/dogs00000056.md
 items/dogs00000058.md
 items/dogs00000063.md
-items/vdmq6km53vxk.md
+items/smfe9ptsq73m.md
 table/items.jsonl
 table/links.jsonl
 table/stamps.jsonl

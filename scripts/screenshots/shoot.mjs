@@ -79,8 +79,12 @@ for (const [file, name] of [
 }
 await page.close();
 
-// The home board.
+// The home board, with a page open in its window: a page is also a regular text editor.
 page = await appPage();
+await page.locator(".react-flow__node", { hasText: "Poster draft" }).first().click({ button: "right" });
+await page.getByText("Edit text", { exact: true }).click();
+await page.waitForTimeout(1200);
+await page.mouse.move(1400, 880);
 await shot(page, "readme-board.png");
 // A board with a calendar.
 await openCard(page, "October plan");
@@ -129,7 +133,11 @@ await page.close();
 
 // The demo vaults (scripts/demos/make.ts): a moodboard, and a branching story game.
 page = await appPage(1440, 900, 2, "demo-dogs");
-await shot(page, "readme-dogs.png");
+// Two steps out: the whole cork board shows, frame and all. A JPEG (the cork grain makes a PNG large).
+for (let step = 0; step < 2; step += 1) await page.click(".react-flow__controls-zoomout");
+await page.waitForTimeout(600);
+await page.screenshot({ path: join(OUT, "readme-dogs.jpg"), type: "jpeg", quality: 82 });
+console.log("readme-dogs.jpg");
 await page.close();
 page = await appPage(1440, 900, 2, "demo-story");
 await shot(page, "readme-story.png");

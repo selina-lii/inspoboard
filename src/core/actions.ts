@@ -556,6 +556,16 @@ export function setBoardBackground(context: ActionContext, boardId: Id, backgrou
   return { label: background === null ? "Remove background" : "Change background", ops: [makeOp("items", boardId, before, after)] };
 }
 
+/** The background image of a board lies on the board (it moves and zooms with the cards), or fills the view. */
+export function setBackgroundOnBoard(context: ActionContext, boardId: Id, onBoard: boolean): Command {
+  const before = requireRecord(context.store.get("items", boardId), "items", boardId);
+  if ((before.backgroundOnBoard === true) === onBoard) return emptyCommand("Change background");
+  const after: ItemRecord = { ...before };
+  if (onBoard) after.backgroundOnBoard = true;
+  else delete after.backgroundOnBoard;
+  return { label: onBoard ? "Background on the board" : "Background fills the view", ops: [makeOp("items", boardId, before, after)] };
+}
+
 /** The area of the cards of a board (board coordinates), or a default area if it has none. */
 export function cardsArea(context: { store: Store; graph: GraphIndex }, boardId: Id): { x: number; y: number; w: number; h: number } {
   const places = context.graph.childrenOf(boardId);

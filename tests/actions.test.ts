@@ -293,6 +293,27 @@ describe("backgrounds and card colors", () => {
     expect(readSettings('{"defaultBackground":"images/a.webp"}').defaultBackground).toBe("images/a.webp");
     expect(readSettings('{"defaultBackground":"javascript:x"}').defaultBackground).toBeNull();
   });
+
+  it("a background on the board: the field turns on and off (one undo step); its box holds all the cards", async () => {
+    const { setBoardBackground, setBackgroundOnBoard, backgroundBox, cardsArea } = await import("../src/core/actions");
+    const { schemaErrors } = await import("../src/core/validate");
+    const context = loadTestContext();
+    context.history.run(setBoardBackground(context, ROOT, "images/cork.jpg"));
+    context.history.run(setBackgroundOnBoard(context, ROOT, true));
+    expect(context.store.get("items", ROOT)?.backgroundOnBoard).toBe(true);
+    expect(schemaErrors("items", context.store.get("items", ROOT)!)).toEqual([]);
+    expect(setBackgroundOnBoard(context, ROOT, true).ops).toEqual([]);
+    const area = cardsArea(context, ROOT);
+    const box = backgroundBox(context, ROOT, 0.7);
+    expect(box.x).toBeLessThanOrEqual(area.x);
+    expect(box.y).toBeLessThanOrEqual(area.y);
+    expect(box.x + box.w).toBeGreaterThanOrEqual(area.x + area.w);
+    expect(box.y + box.h).toBeGreaterThanOrEqual(area.y + area.h);
+    expect(box.h / box.w).toBeCloseTo(0.7);
+    context.history.undo();
+    expect("backgroundOnBoard" in context.store.get("items", ROOT)!).toBe(false);
+    expect(schemaErrors("items", { id: "a1b2c3d4e5f6", name: "x", created: "2024-01-01", backgroundOnBoard: false })).not.toEqual([]);
+  });
 });
 
 describe("small items in a page", () => {

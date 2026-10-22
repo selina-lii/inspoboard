@@ -36,7 +36,7 @@ export function sampleVault(): VaultFiles {
   card(garden.itemId, "note", 260, 40, "Table", "Oak, 2.4 m. Room for two.");
   card(garden.itemId, "todo", 40, 240, "", "Measure the window");
   const palette = card(root, "note", 280, 0, "Dusk palette", "Indigo, warm gray, a little rust.\nTry it on the poster first.", { color: "#5b4b8a" });
-  const poster = card(root, "page", 560, -40, "Poster draft", "A city at dusk, seen from a bridge.\n\n## Layers\n\n1. Sky gradient\n2. Skyline\n3. River lights\n\n> Keep the river the brightest part.");
+  const poster = card(root, "page", 560, -40, "Poster draft", "A city at dusk, seen from a bridge. **Warm lights**, *cool shadows*.\n\n## Layers\n\n1. Sky gradient\n2. Skyline\n3. River lights\n\n## To do\n\n- [x] Pick the palette\n- [ ] Print a test at A3\n\n> Keep the river the brightest part.\n\nReferences: [color theory notes](https://example.com/color).");
   card(root, "comment", 600, 120, "", "Try a darker river?", { on: poster.itemId });
   const quote = card(root, "quote", 0, 230, "", "Simplicity is the ultimate sophistication.");
   card(root, "flashcard", 900, -20, "Golden ratio", "About 1.618");

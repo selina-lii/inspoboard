@@ -33,6 +33,7 @@ export function schemaErrors(table: TableName, value: unknown): string[] {
       allow("background", isBackground, 'a color "#rrggbb" or an image path "images/<name>"');
       allow("backgroundWidth", (v) => isFiniteNumber(v) && (v as number) > 0, "a number above 0");
       allow("backgroundFixed", (v) => v === true, "true");
+      allow("backgroundOnBoard", (v) => v === true, "true");
       allow("backgroundCenter", (v) => Array.isArray(v) && v.length === 2 && v.every(isFiniteNumber), "a list of two numbers");
       allow("url", isString, "a string");
       allow("author", isString, "a string");

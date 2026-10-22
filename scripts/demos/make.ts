@@ -7,12 +7,13 @@
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { deflateSync } from "node:zlib";
 import { dogsVault, storyVault, type DogPhoto } from "./vaults";
 
 const REPO = process.env.REPO ?? process.cwd();
 const DATA = join(REPO, "data");
 const PHOTOS = join(REPO, "scripts", "demos", "dogs");
+/** The cork board behind the photos (an original picture: scripts/demos/cork.ts). */
+const CORK = "cork-board.jpg";
 const force = process.argv.includes("--force");
 /** The files that the last run wrote into a demo vault: a new run may replace only these. */
 const MANIFEST = "DEMO-FILES.txt";
@@ -23,47 +24,6 @@ const PHOTO_NAMES: Record<string, string> = {
   "dog-01.jpg": "On the lawn", "dog-02.jpg": "Show coat", "dog-03.jpg": "Topknot day", "dog-04.jpg": "Cotton ball", "dog-05.jpg": "Nap time",
   "dog-06.jpg": "Westie", "dog-07.jpg": "Westie puppy", "dog-08.jpg": "Zoomies", "dog-09.jpg": "Tennis ball", "dog-10.jpg": "From an old book",
 };
-
-/** A white paper texture (PNG), made here: a little grain, no pattern. */
-function paperPng(width: number, height: number): Buffer {
-  let seed = 7;
-  const random = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296);
-  const rows: Buffer[] = [];
-  for (let y = 0; y < height; y += 1) {
-    const row = Buffer.alloc(1 + width * 3);
-    for (let x = 0; x < width; x += 1) {
-      const grain = Math.round((random() - 0.5) * 6);
-      row[1 + x * 3] = 250 + grain - 2;
-      row[2 + x * 3] = 249 + grain - 2;
-      row[3 + x * 3] = 246 + grain - 2;
-    }
-    rows.push(row);
-  }
-  const crcTable = Array.from({ length: 256 }, (_, n) => {
-    let c = n;
-    for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-    return c >>> 0;
-  });
-  const crc = (bytes: Buffer) => {
-    let c = 0xffffffff;
-    for (const byte of bytes) c = crcTable[(c ^ byte) & 0xff]! ^ (c >>> 8);
-    return (c ^ 0xffffffff) >>> 0;
-  };
-  const chunk = (type: string, data: Buffer) => {
-    const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
-    const length = Buffer.alloc(4);
-    length.writeUInt32BE(data.length);
-    const sum = Buffer.alloc(4);
-    sum.writeUInt32BE(crc(body));
-    return Buffer.concat([length, body, sum]);
-  };
-  const header = Buffer.alloc(13);
-  header.writeUInt32BE(width, 0);
-  header.writeUInt32BE(height, 4);
-  header[8] = 8; // bit depth
-  header[9] = 2; // RGB
-  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk("IHDR", header), chunk("IDAT", deflateSync(Buffer.concat(rows))), chunk("IEND", Buffer.alloc(0))]);
-}
 
 /** The size of a PNG (its header) or a JPEG (its start-of-frame marker). */
 function imageSize(bytes: Buffer): { w: number; h: number } {
@@ -113,10 +73,10 @@ function writeVault(name: string, files: ReadonlyMap<string, string>, images: Re
 }
 
 const photos: DogPhoto[] = readdirSync(PHOTOS)
-  .filter((file) => /\.(jpe?g|png)$/i.test(file))
+  .filter((file) => /\.(jpe?g|png)$/i.test(file) && file !== CORK)
   .sort((a, b) => Number(b.startsWith("star")) - Number(a.startsWith("star")) || a.localeCompare(b))
   .map((file) => ({ file, name: PHOTO_NAMES[file] ?? file, ...imageSize(readFileSync(join(PHOTOS, file))) }));
-const dogImages: Record<string, Buffer> = { "paper-white.png": paperPng(1600, 1000) };
+const dogImages: Record<string, Buffer> = { [CORK]: readFileSync(join(PHOTOS, CORK)) };
 for (const photo of photos) dogImages[photo.file] = readFileSync(join(PHOTOS, photo.file));
-writeVault("demo-dogs", dogsVault(photos, "images/paper-white.png"), dogImages, "# Small white dogs\n\nA demo moodboard vault.");
+writeVault("demo-dogs", dogsVault(photos, `images/${CORK}`), dogImages, "# Small white dogs\n\nA demo moodboard vault.");
 writeVault("demo-story", storyVault(), {}, "# Biscuit and the Lighthouse\n\nA demo vault: a branching story game.");

@@ -1,6 +1,6 @@
 // Demo vaults (made-up content), built with the app's own actions, so they have the format of a real vault.
-// - "Small white dogs": a moodboard. Public-domain and CC0 photos (scripts/demos/dogs/CREDITS.md), a white paper
-//   background, the three item sizes, media items, and links on cards, on passages, and inside a page.
+// - "Small white dogs": a moodboard. Public-domain and CC0 photos (scripts/demos/dogs/CREDITS.md), on a cork board
+//   (an original picture: scripts/demos/cork.ts) that lies on the board, the three item sizes, media items, and links on cards, on passages, and inside a page.
 // - "Biscuit and the Lighthouse": a branching story game. Each scene is a page; its choices are passage links
 //   ("[text](link:<id>)") to the next scene. A click on a choice jumps there.
 
@@ -55,7 +55,8 @@ export type DogPhoto = { file: string; name: string; w: number; h: number };
 export function dogsVault(photos: readonly DogPhoto[], background: string): VaultFiles {
   const v = builder("dogs", "Small white dogs");
   const { card, link, resize, run, context, root } = v;
-  v.update(root, { background });
+  // The cork board lies on the board: it holds all the cards (backgroundOnBoard), and moves and zooms with them.
+  v.update(root, { background, backgroundOnBoard: true });
 
   // Large: a collection (a board in the board).
   const breeds = card(root, "note", -280, 260, "Breeds", "", { board: true });

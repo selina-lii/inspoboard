@@ -40,6 +40,11 @@ export type ItemRecord = {
   backgroundCenter?: [number, number];
   /** True: the background image stays still (it fills the view; it does not move or zoom with the cards). */
   backgroundFixed?: boolean;
+  /**
+   * True: the background image lies on the board, like a cork board or a sheet: it moves and zooms with the cards,
+   * at `backgroundWidth` and `backgroundCenter`, or (missing) large enough to hold all cards. Missing: it fills the view.
+   */
+  backgroundOnBoard?: true;
   /** A link object (view "weblink"): the web address it opens. The name is the text that shows. */
   url?: string;
   /** A comment (view "comment"): the signature of the person who wrote it (Settings → Your name). */

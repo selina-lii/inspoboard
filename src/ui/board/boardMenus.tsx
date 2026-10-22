@@ -47,7 +47,7 @@ import {
 } from "lucide-react";
 import { createMediaItem } from "../../core/media";
 import { type MouseEvent, type MutableRefObject } from "react";
-import { attachItem, completeItems, setCardColor, TODO_COLORS, NOTE_GRAY, createOutlineWithPage, moveIntoBoard, releaseFromNote, setPlacementExpanded, setGroupFilled, setQuoteMarks, setPlacementRects } from "../../core/actions";
+import { attachItem, completeItems, setBackgroundOnBoard, setCardColor, TODO_COLORS, NOTE_GRAY, createOutlineWithPage, moveIntoBoard, releaseFromNote, setPlacementExpanded, setGroupFilled, setQuoteMarks, setPlacementRects } from "../../core/actions";
 import type { Command } from "../../core/commands";
 import { createOutline, indentRow, moveRow, moveRowToEnd, outdentRow, removeFromOutline, setOutlineDirection, setOutlineList } from "../../core/outline";
 import { linksOf } from "../app/textLinks";
@@ -511,6 +511,15 @@ export function openPaneMenuOf(env: BoardMenuEnv, event: MouseEvent | globalThis
       { label: "Background image for this board…", icon: <ImagePlus size={14} />, onSelect: image("board") },
       { label: "Background image for all boards…", icon: <ImagePlus size={14} />, onSelect: image("all") },
     ];
+    // An image of this board: it fills the view, or lies on the board (a cork board: it moves with the cards).
+    if (ownBackground !== null && !ownBackground.startsWith("#")) {
+      const onBoard = session.store.get("items", boardId)?.backgroundOnBoard === true;
+      entries.push({
+        label: onBoard ? "Background: fill the view" : "Background: on the board (it moves with the cards)",
+        icon: <ImagePlus size={14} />,
+        onSelect: () => runCommand(setBackgroundOnBoard(session.context, boardId, !onBoard)),
+      });
+    }
     if (ownBackground !== null) entries.push({ label: "Remove the background of this board", icon: <ImageMinus size={14} />, onSelect: () => void applyBackground(session, runCommand, "board", boardId, null) });
     if (settings.defaultBackground !== null) entries.push({ label: "Remove the default background", icon: <ImageMinus size={14} />, onSelect: () => void applyBackground(session, runCommand, "all", boardId, null) });
     setMenu({ x: event.clientX, y: event.clientY, entries });

@@ -52,7 +52,7 @@ export const TABLE_FILES: Record<LineTable, string> = {
 
 /** Field order in saved lines. Known fields come first. Other fields follow in alphabetical order. */
 const FIELD_ORDER: Record<LineTable, readonly string[]> = {
-  items: ["id", "name", "subtitle", "codeName", "created", "modified", "date", "board", "list", "background", "backgroundWidth", "backgroundCenter", "backgroundFixed", "url", "author", "on", "quote", "resolved", "pageAt", "trashed", "trashedFrom", "media", "sources", "discarded", "lostAndFound", "detached", "madeFrom"],
+  items: ["id", "name", "subtitle", "codeName", "created", "modified", "date", "board", "list", "background", "backgroundWidth", "backgroundCenter", "backgroundFixed", "backgroundOnBoard", "url", "author", "on", "quote", "resolved", "pageAt", "trashed", "trashedFrom", "media", "sources", "discarded", "lostAndFound", "detached", "madeFrom"],
   links: ["id", "kind", "from", "to", "view", "x", "y", "w", "h", "expanded", "color", "ref", "outline", "parent", "rank", "day", "until", "time", "offset", "p3", "stubs", "label", "group", "start", "end", "quote", "at", "fromQuote", "onBoard", "dashed", "marks", "shape", "shapePath", "filled"],
   stamps: ["id", "alt", "w", "h", "path"],
   outlines: ["id", "type", "name", "board", "x", "y", "list", "direction", "start", "end", "radius", "seed"],

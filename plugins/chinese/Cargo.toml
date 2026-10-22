@@ -6,6 +6,8 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.90"
 publish = false
+# GPL because it links zhconv (GPL-2.0-or-later). The rest of Inspoboard is MIT (a separate program).
+license = "GPL-2.0-or-later"
 
 # Not a member of any workspace: it builds alone.
 [workspace]
