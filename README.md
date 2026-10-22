@@ -124,7 +124,7 @@ The pictures above use made-up vaults: a sample vault ([scripts/screenshots](scr
 
 ## License
 
-[MIT](LICENSE), except the `chinese` plugin ([GPL-2.0-or-later](plugins/chinese/LICENSE)): it uses `zhconv`, which is GPL. The plugin is a separate program, so the GPL covers only it. The local models that plugins download have their own licenses (for example the Gemma terms).
+Copyright © 2026 Selina Li. [GPL-3.0-or-later](LICENSE): you may use, change and share Inspoboard, and even sell copies, but anyone who gives out a copy (changed or not) must give its full source under the same license. The local models that plugins download have their own licenses (for example the Gemma terms).
 
 `@selina-li` w/ the help of `@claude`
 

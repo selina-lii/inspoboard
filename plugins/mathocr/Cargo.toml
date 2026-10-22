@@ -3,7 +3,7 @@ name = "inspoboard-mathocr"
 version = "0.1.0"
 edition = "2024"
 description = "Inspoboard plugin: finds formulas in page images and reads them as LaTeX (Pix2Text models, ONNX Runtime)."
-license = "MIT"
+license = "GPL-3.0-or-later"
 publish = false
 
 # Not part of the app workspace: the app build never builds this plugin.

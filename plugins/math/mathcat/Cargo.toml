@@ -3,7 +3,7 @@ name = "inspoboard-mathcat"
 version = "0.1.0"
 edition = "2024"
 description = "Helper of the Inspoboard plugin \"Math to words\": MathML to words with MathCAT."
-license = "MIT"
+license = "GPL-3.0-or-later"
 publish = false
 
 # Not part of the app workspace: the app build never builds this helper.
